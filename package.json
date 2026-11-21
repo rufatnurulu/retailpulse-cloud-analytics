@@ -1,0 +1,34 @@
+{
+  "name": "retailpulse-cloud-analytics",
+  "version": "1.0.0",
+  "description": "A cloud-based retail sales analytics platform using Google Firebase, Python, SQL, and JavaScript.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rufatnurulu/retailpulse-cloud-analytics.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/rufatnurulu/retailpulse-cloud-analytics/issues"
+  },
+  "homepage": "https://github.com/rufatnurulu/retailpulse-cloud-analytics#readme",
+  "dependencies": {
+    "chart.js": "^4.6.1",
+    "firebase": "^13.4.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.8"
+  }
+}
