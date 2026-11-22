@@ -13,7 +13,7 @@ import {
   onSnapshot
 } from "firebase/firestore";
 import { BarController, BarElement, CategoryScale, Chart, Legend, LinearScale, Tooltip } from "chart.js";
-import { filterOrders, monthlyRevenue, months, orderYears } from "./analytics.js";
+import { filterOrders, monthlyRevenue, months, orderYears, ordersCsv } from "./analytics.js";
 import { createOrder } from "./orders.js";
 import { adjustStock } from "./stock.js";
 
@@ -313,7 +313,7 @@ function updateDashboard() {
     : 0;
 
   const activeCustomers = new Set(
-    filtered.map(order => order.customer_id)
+    filtered.map(order => order.customer_id).filter(id => typeof id === "string" && id.trim())
   ).size;
 
   $("#revenue").textContent = completed.length ? money(revenue) : "—";
@@ -343,14 +343,14 @@ function updateDashboard() {
 const compactAmount = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const chartAxis = {
   border: { display: false },
-  grid: { color: "#e9eef5", drawTicks: false },
-  ticks: { color: "#506079", padding: 8, callback: value => compactAmount.format(value) },
+  grid: { color: "#2b3c56", drawTicks: false },
+  ticks: { color: "#adc0dc", padding: 8, callback: value => compactAmount.format(value) },
   beginAtZero: true
 };
 const chartLabels = {
   border: { display: false },
   grid: { display: false },
-  ticks: { color: "#506079", padding: 8 }
+  ticks: { color: "#adc0dc", padding: 8 }
 };
 const chartPlugins = {
   legend: { display: false },
@@ -374,7 +374,7 @@ function updateSalesChart(completed, month) {
       datasets: [{
         label: "Completed Sales (AZN)",
         data: monthly.map(({ total }) => total),
-        backgroundColor: "#3168de",
+        backgroundColor: "#7796ff",
         hoverBackgroundColor: "#164bd4",
         maxBarThickness: 34,
         borderRadius: 4
@@ -421,7 +421,7 @@ function updateProductsChart(completed) {
       datasets: [{
         label: "Revenue (AZN)",
         data: topFive.map(([, revenue]) => revenue),
-        backgroundColor: "#178c7c",
+        backgroundColor: "#51cfbc",
         hoverBackgroundColor: "#06796b",
         maxBarThickness: 22,
         borderRadius: 4
@@ -449,25 +449,7 @@ $("#export-csv").addEventListener("click", () => {
   if (!access.export || dashboardContent.hidden || $("#export-csv").disabled) return;
   const filtered = getFilteredOrders();
 
-  const columns = [
-    "order_id", "customer_id", "product_id",
-    "order_date", "quantity", "unit_price",
-    "total_amount", "status"
-  ];
-
-  const escapeCsv = value => {
-    const safeValue = typeof value === "string" && /^(?:\s*[=+@-]|[\t\r\n])/.test(value)
-      ? `'${value}`
-      : value;
-    return `"${String(safeValue ?? "").replace(/"/g, '""')}"`;
-  };
-
-  const csv = [
-    columns.join(","),
-    ...filtered.map(order =>
-      columns.map(key => escapeCsv(order[key])).join(",")
-    )
-  ].join("\r\n");
+  const csv = ordersCsv(filtered);
 
   const blob = new Blob([csv], {
     type: "text/csv;charset=utf-8"
@@ -531,14 +513,21 @@ function populateOrderForm() {
 
 function updateOrderProductDetail() {
   const product = products.find(item => item.id === $("#order-product").value);
+  const quantity = $("#order-quantity").valueAsNumber;
+  const price = product?.price ?? product?.unit_price;
+  const validQuantity = Number.isInteger(quantity) && quantity > 0 && quantity <= 1000000;
+  const cents = price * quantity * 100;
+  const total = validQuantity && cents <= Number.MAX_SAFE_INTEGER
+    ? ` · ${money(Math.round(cents) / 100)} total` : "";
   $("#order-product-detail").textContent = product
-    ? `${money(product.price ?? product.unit_price)} per unit · ${product.stock.toLocaleString("en-US")} available`
+    ? `${money(price)} per unit · ${product.stock.toLocaleString("en-US")} available${total}`
     : "Select a product to see its price and available stock.";
 }
 
 $("#customer-search").addEventListener("input", populateOrderForm);
 $("#product-search").addEventListener("input", populateOrderForm);
 $("#order-product").addEventListener("change", updateOrderProductDetail);
+$("#order-quantity").addEventListener("input", updateOrderProductDetail);
 
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();

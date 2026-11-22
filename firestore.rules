@@ -4,23 +4,30 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() {
-  return request.auth != null;
-}
+      return request.auth != null;
+    }
 
-    function userProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    function hasRole(roles) {
+      return signedIn() && activeRole(request.auth.uid, roles);
+    }
+
+    function activeRole(uid, roles) {
+      let path = /databases/$(database)/documents/users/$(uid);
+      return exists(path) && validProfile(get(path).data, roles);
+    }
+
+    function validProfile(profile, roles) {
+      return profile.keys().hasAll(['active', 'role'])
+        && profile.active is bool && profile.active == true
+        && profile.role is string && profile.role in roles;
     }
 
     function canCreateOrder() {
-      return signedIn()
-        && userProfile().active == true
-        && userProfile().role in ['admin', 'sales'];
+      return hasRole(['admin', 'sales']);
     }
 
     function canAdjustStock() {
-      return signedIn()
-        && userProfile().active == true
-        && userProfile().role in ['admin', 'inventory'];
+      return hasRole(['admin', 'inventory']);
     }
 
     function validId(id) {
@@ -89,12 +96,12 @@ service cloud.firestore {
     }
 
     match /customers/{documentId} {
-      allow read: if signedIn();
+      allow read: if hasRole(['admin', 'sales']);
       allow write: if false;
     }
 
     match /products/{documentId} {
-      allow read: if signedIn();
+      allow read: if hasRole(['admin', 'sales', 'inventory', 'analyst']);
 
       allow update: if canAdjustStock()
         && request.resource.data.diff(resource.data)
@@ -108,7 +115,7 @@ service cloud.firestore {
     }
 
     match /orders/{documentId} {
-      allow read: if signedIn();
+      allow read: if hasRole(['admin', 'sales', 'analyst']);
 
       allow create: if canCreateOrder() && validOrder(documentId);
       allow update, delete: if false;

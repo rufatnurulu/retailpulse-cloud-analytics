@@ -51,3 +51,11 @@ test("revenue chart uses the selected period and shows zero for empty months", (
   assert.deepEqual(monthlyRevenue(january, "01"), [{ label: "January", total: 20 }]);
   assert.deepEqual(monthlyRevenue([], "01"), [{ label: "January", total: 0 }]);
 });
+
+
+test("CSV keeps filtered records, escapes quotes and neutralizes formula cells", async () => {
+  const { ordersCsv } = await import("../frontend/js/analytics.js");
+  const csv = ordersCsv([{ order_id: 'a"b', customer_id: "=1+1", quantity: 2, total_amount: 3.98 }]);
+  assert.equal(csv.split("\r\n").length, 2);
+  assert.ok(csv.endsWith(`"a""b","'=1+1","","","2","","3.98",""`));
+});

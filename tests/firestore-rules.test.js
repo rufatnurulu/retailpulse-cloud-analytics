@@ -43,12 +43,19 @@ after(async () => {
   await environment?.cleanup();
 });
 
-test("existing collection reads require authentication", async () => {
+test("collection access follows the workspace's role permissions", async () => {
   const anonymous = environment.unauthenticatedContext().firestore();
-  for (const name of ["products", "customers", "orders"]) {
+  const collections = {
+    products: roles,
+    customers: ["admin", "sales"],
+    orders: ["admin", "sales", "analyst"]
+  };
+  const blockedProfiles = ["inactive", "missing", "invalid", "missing-role", "missing-active", "invalid-active", "invalid-role-type"];
+  for (const [name, allowed] of Object.entries(collections)) {
     await assertFails(getDocs(collection(anonymous, name)));
-    for (const role of [...roles, "inactive", "missing"]) {
-      await assertSucceeds(getDocs(collection(dbFor(role), name)));
+    for (const uid of [...roles, ...blockedProfiles]) {
+      const result = getDocs(collection(dbFor(uid), name));
+      await (allowed.includes(uid) ? assertSucceeds(result) : assertFails(result));
     }
   }
 });
@@ -177,13 +184,13 @@ test("business data edits and deletions are denied", async () => {
   await assertFails(deleteDoc(doc(admin, "customers", "customer-doc")));
 });
 
-test("deactivating a profile revokes order writes for an existing session", async () => {
+test("deactivating a profile revokes reads and order writes for an existing session", async () => {
   const db = dbFor("sales");
   await assertSucceeds(getDocs(collection(db, "customers")));
   await environment.withSecurityRulesDisabled(async context => {
     await updateDoc(doc(context.firestore(), "users", "sales"), { active: false });
   });
-  await assertSucceeds(getDocs(collection(db, "customers")));
+  await assertFails(getDocs(collection(db, "customers")));
   await assertFails(placeOrder(db, "revoked-order", 6));
   await assertFails(createOrder(db, "customer-doc", "legacy-price", 1));
 });
@@ -195,4 +202,31 @@ test("an inventory manager loses stock permissions when the profile is deactivat
     await updateDoc(doc(context.firestore(), "users", "inventory"), { active: false });
   });
   await assertFails(adjustStock(db, "legacy", 1));
+});
+
+
+test("concurrent sales for the last item create only one order", async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, "products", "last-item"), { product_id: "P004", price: 5, stock: 1 });
+    await setDoc(doc(db, "users", "concurrent-sales"), { role: "sales", active: true });
+  });
+  for (const uid of ["concurrent-sales", "admin"]) {
+    const db = dbFor(uid);
+    await assertSucceeds(getDoc(doc(db, "customers", "customer-doc")));
+    await assertSucceeds(getDoc(doc(db, "products", "last-item")));
+  }
+  const outcomes = await Promise.allSettled([
+    createOrder(dbFor("concurrent-sales"), "customer-doc", "last-item", 1),
+    createOrder(dbFor("admin"), "customer-doc", "last-item", 1)
+  ]);
+  const success = outcomes.filter(result => result.status === "fulfilled");
+  assert.equal(success.length, 1);
+  assert.match(outcomes.find(result => result.status === "rejected").reason.message, /Only 0 units available|PERMISSION_DENIED/);
+  const db = dbFor("admin");
+  const product = (await getDoc(doc(db, "products", "last-item"))).data();
+  assert.equal(product.stock, 0);
+  assert.equal(product.last_order_id, success[0].value);
+  const orders = await getDocs(collection(db, "orders"));
+  assert.equal(orders.docs.filter(order => order.data().product_doc_id === "last-item").length, 1);
 });
