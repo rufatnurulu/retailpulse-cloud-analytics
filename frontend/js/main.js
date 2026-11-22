@@ -12,12 +12,12 @@ import {
   doc,
   onSnapshot
 } from "firebase/firestore";
-import { BarController, BarElement, CategoryScale, Chart, Legend, LinearScale, Tooltip } from "chart.js";
+import { BarController, BarElement, CategoryScale, Chart, Filler, LineController, LineElement, LinearScale, PointElement, Tooltip } from "chart.js";
 import { filterOrders, monthlyRevenue, months, orderYears } from "./analytics.js";
 import { createOrder } from "./orders.js";
 import { adjustStock } from "./stock.js";
 
-Chart.register(BarController, BarElement, CategoryScale, Legend, LinearScale, Tooltip);
+Chart.register(BarController, BarElement, CategoryScale, Filler, LineController, LineElement, LinearScale, PointElement, Tooltip);
 
 const $ = selector => document.querySelector(selector);
 
@@ -47,6 +47,7 @@ let dataVersion = 0;
 let currentRole;
 let currentView;
 let reportingPeriod = "";
+let reportingOrderCount = 0;
 
 const viewDetails = {
   overview: ["Overview", "Sales, orders, and customers for the selected period."],
@@ -71,6 +72,7 @@ function showView(view, focusHeading = false) {
   const heading = $("#workspace-heading");
   heading.textContent = viewDetails[view][0];
   updateViewContext();
+  if (!dashboardContent.hidden) updateWorkspaceSummary();
   if (focusHeading) {
     window.scrollTo(0, 0);
     heading.focus({ preventScroll: true });
@@ -86,6 +88,16 @@ function updateViewContext() {
   $("#overview-period").textContent = ["overview", "analytics"].includes(currentView) && reportingPeriod
     ? `${reportingPeriod} · ${subtitle}`
     : subtitle;
+}
+
+function updateWorkspaceSummary() {
+  let summary = "";
+  if (currentView === "inventory") {
+    summary = `${products.length.toLocaleString("en-US")} ${products.length === 1 ? "product" : "products"} in catalog`;
+  } else if (currentView === "overview" || currentView === "analytics") {
+    summary = `${reportingOrderCount.toLocaleString("en-US")} ${reportingOrderCount === 1 ? "order" : "orders"} in period`;
+  }
+  $("#dashboard-status").textContent = summary;
 }
 
 document.querySelectorAll("[data-nav]").forEach(link => {
@@ -114,6 +126,7 @@ function resetData() {
   $("#year-filter").replaceChildren();
   $("#month-filter").value = "all";
   reportingPeriod = "";
+  reportingOrderCount = 0;
   currentView = undefined;
   $("#workspace-heading").textContent = "Workspace";
   updateViewContext();
@@ -127,11 +140,8 @@ function resetData() {
   populateStockForm();
 }
 
-const money = value =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "AZN"
-  }).format(value);
+const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "AZN" });
+const money = value => currency.format(value);
 
 loginForm.addEventListener("submit", async event => {
   event.preventDefault();
@@ -238,7 +248,7 @@ onAuthStateChanged(auth, user => {
         dashboardContent.hidden = false;
         renderInventory();
         if (access.orders) updateDashboard();
-        else status.textContent = `${products.length} products`;
+        else updateWorkspaceSummary();
       }, () => {
         if (version !== dataVersion) return;
         currentRole = undefined;
@@ -296,7 +306,7 @@ function updateDashboard() {
   const period = month === "all" ? year : `${months[Number(month) - 1]} ${year}`;
   reportingPeriod = year ? period : "";
   updateViewContext();
-  $("#sales-title").textContent = year ? `Sales performance · ${period}` : "Sales performance";
+  $("#sales-title").textContent = year ? `Revenue trend · ${period}` : "Revenue trend";
 
   const filtered = getFilteredOrders();
 
@@ -336,26 +346,26 @@ function updateDashboard() {
     salesChart = productsChart = null;
   }
 
-  $("#dashboard-status").textContent =
-    `${filtered.length.toLocaleString("en-US")} filtered orders · ${products.length.toLocaleString("en-US")} products`;
+  reportingOrderCount = filtered.length;
+  updateWorkspaceSummary();
 }
 
 const compactAmount = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 const chartAxis = {
   border: { display: false },
-  grid: { color: "#e9eef5", drawTicks: false },
-  ticks: { color: "#506079", padding: 8, callback: value => compactAmount.format(value) },
+  grid: { color: "#24334b", drawTicks: false },
+  ticks: { color: "#a1afc4", padding: 8, callback: value => compactAmount.format(value) },
   beginAtZero: true
 };
 const chartLabels = {
   border: { display: false },
   grid: { display: false },
-  ticks: { color: "#506079", padding: 8 }
+  ticks: { color: "#a1afc4", padding: 8 }
 };
 const chartPlugins = {
   legend: { display: false },
   tooltip: {
-    backgroundColor: "#182943",
+    backgroundColor: "#233853",
     padding: 11,
     displayColors: false,
     callbacks: { label: item => money(item.raw) }
@@ -368,22 +378,32 @@ function updateSalesChart(completed, month) {
   if (salesChart) salesChart.destroy();
 
   salesChart = new Chart($("#sales-chart"), {
-    type: "bar",
+    type: "line",
     data: {
       labels: monthly.map(({ label }) => label.slice(0, 3)),
       datasets: [{
-        label: "Completed Sales (AZN)",
+        label: "Completed sales",
         data: monthly.map(({ total }) => total),
-        backgroundColor: "#3168de",
-        hoverBackgroundColor: "#164bd4",
-        maxBarThickness: 34,
-        borderRadius: 4
+        borderColor: "#64ddff",
+        borderWidth: 2.5,
+        pointRadius: monthly.length === 1 ? 5 : 2,
+        pointHoverRadius: 5,
+        pointBackgroundColor: "#64ddff",
+        tension: 0.25,
+        fill: true,
+        backgroundColor: ({ chart }) => {
+          const gradient = chart.ctx.createLinearGradient(0, 0, 0, chart.height || 240);
+          gradient.addColorStop(0, "#2f8df879");
+          gradient.addColorStop(1, "#2f8df805");
+          return gradient;
+        }
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      interaction: { intersect: false, mode: "index" },
       scales: { x: chartLabels, y: chartAxis },
       plugins: chartPlugins
     }
@@ -421,8 +441,8 @@ function updateProductsChart(completed) {
       datasets: [{
         label: "Revenue (AZN)",
         data: topFive.map(([, revenue]) => revenue),
-        backgroundColor: "#178c7c",
-        hoverBackgroundColor: "#06796b",
+        backgroundColor: ["#a18bff", "#8276ee", "#686cd7", "#526cc6", "#496ab8"],
+        hoverBackgroundColor: "#b8a5ff",
         maxBarThickness: 22,
         borderRadius: 4
       }]

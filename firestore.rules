@@ -11,6 +11,12 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    function canReadAs(roles) {
+      return signedIn()
+        && userProfile().active == true
+        && userProfile().role in roles;
+    }
+
     function canCreateOrder() {
       return signedIn()
         && userProfile().active == true
@@ -89,12 +95,12 @@ service cloud.firestore {
     }
 
     match /customers/{documentId} {
-      allow read: if signedIn();
+      allow read: if canReadAs(['admin', 'sales']);
       allow write: if false;
     }
 
     match /products/{documentId} {
-      allow read: if signedIn();
+      allow read: if canReadAs(['admin', 'sales', 'inventory', 'analyst']);
 
       allow update: if canAdjustStock()
         && request.resource.data.diff(resource.data)
@@ -108,7 +114,7 @@ service cloud.firestore {
     }
 
     match /orders/{documentId} {
-      allow read: if signedIn();
+      allow read: if canReadAs(['admin', 'sales', 'analyst']);
 
       allow create: if canCreateOrder() && validOrder(documentId);
       allow update, delete: if false;

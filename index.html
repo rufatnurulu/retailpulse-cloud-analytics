@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
   <link rel="manifest" href="/site.webmanifest">
-  <meta name="theme-color" content="#f4f7fb">
+  <meta name="theme-color" content="#0b1221">
   <link rel="stylesheet" href="/frontend/css/style.css">
   <title>RetailPulse | Cloud Analytics</title>
 </head>
@@ -30,7 +30,7 @@
         <a class="brand" href="./"><img class="brand-mark" src="/favicon.svg" width="35" height="35" alt="">RetailPulse</a>
         <div class="login-copy">
           <h1>Know what’s selling.<br>Know what’s in stock.</h1>
-          <p>Sales performance, inventory, and order entry in one retail workspace.</p>
+          <p>Track revenue, manage orders, and keep a clear view of available stock.</p>
           <ul class="login-capabilities">
             <li><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg> Sales analytics</li>
             <li><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg> Inventory management</li>
@@ -72,10 +72,12 @@
           </div>
         </div>
         <header class="workspace-header">
-          <h1 id="workspace-heading" tabindex="-1">Workspace</h1>
-          <p id="overview-period"></p>
+          <div>
+            <h1 id="workspace-heading" tabindex="-1">Workspace</h1>
+            <p id="overview-period"></p>
+          </div>
+          <p id="dashboard-status" class="workspace-status" role="status">Checking account access…</p>
         </header>
-        <p id="dashboard-status" class="workspace-status" role="status">Checking account access…</p>
         <div id="dashboard-content" hidden>
           <section id="analytics" aria-label="Sales analytics" hidden>
             <div class="filter-panel">
@@ -106,11 +108,11 @@
             <p id="analytics-empty" class="empty-message" role="status" hidden>No orders match this period and category.</p>
             <div id="analytics-charts" class="chart-grid">
               <article class="panel chart-card">
-                <h2 id="sales-title">Sales performance</h2><p class="panel-subtitle">Completed orders · AZN</p>
+                <div class="chart-heading"><div><h2 id="sales-title">Revenue trend</h2><p class="panel-subtitle">Completed sales over the selected period</p></div><span class="chart-unit">AZN</span></div>
                 <div class="chart-container"><canvas id="sales-chart" role="img" aria-label="Completed sales by month"></canvas></div>
               </article>
               <article class="panel chart-card">
-                <h2>Top products by revenue</h2><p class="panel-subtitle">Highest revenue from completed orders · AZN</p>
+                <div class="chart-heading"><div><h2>Top products</h2><p class="panel-subtitle">Ranked by completed sales revenue</p></div><span class="chart-unit">AZN</span></div>
                 <div class="chart-container"><canvas id="products-chart" role="img" aria-label="Top five products by completed sales revenue"></canvas></div>
               </article>
             </div>
