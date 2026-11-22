@@ -273,3 +273,41 @@ button:hover {
     flex-direction: column;
   }
 }
+
+#stock-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+#stock-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #475569;
+}
+
+#stock-form select,
+#stock-form input {
+  max-width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px;
+  background: white;
+}
+
+#stock-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#stock-help {
+  color: #475569;
+}
+
+@media (max-width: 600px) {
+  #stock-form > * {
+    width: 100%;
+  }
+}

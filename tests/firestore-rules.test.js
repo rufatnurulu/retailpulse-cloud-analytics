@@ -3,6 +3,7 @@ import { after, before, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { adjustStock } from "../frontend/js/stock.js";
 
 const projectId = "demo-retailpulse";
 let environment;
@@ -117,10 +118,39 @@ test("sales can only deduct stock in a valid, atomic order", async () => {
   await assertSucceeds(placeOrder(dbFor("admin"), "admin-order", 8));
 });
 
-test("standalone stock changes, business data edits, and deletions are denied", async () => {
-  for (const role of roles) {
-    await assertFails(updateDoc(doc(dbFor(role), "products", "product-doc"), { stock: 10 }));
+test("inventory managers can adjust stock independently and preserve sale and catalog fields", async () => {
+  const db = dbFor("inventory");
+  const product = doc(db, "products", "product-doc");
+  const before = (await getDoc(product)).data();
+
+  await assertSucceeds(adjustStock(db, "product-doc", 4));
+  await assertSucceeds(adjustStock(db, "product-doc", -2));
+  assert.deepEqual((await getDoc(product)).data(), { ...before, stock: before.stock + 2 });
+
+  const legacy = doc(db, "products", "legacy");
+  await assertSucceeds(adjustStock(db, "legacy", 5));
+  await Promise.all([adjustStock(db, "legacy", 2), adjustStock(db, "legacy", 3)]);
+  assert.equal((await getDoc(legacy)).data().stock, 10);
+  await assert.rejects(adjustStock(db, "legacy", -11), /invalid stock level/);
+  await assertSucceeds(adjustStock(dbFor("admin"), "legacy", -10));
+  assert.equal((await getDoc(legacy)).data().stock, 0);
+});
+
+test("stock rules reject invalid values, other field changes, and unauthorized roles", async () => {
+  const inventory = dbFor("inventory");
+  const product = doc(inventory, "products", "product-doc");
+  for (const stock of [-1, 1.5, "2", 9007199254740992]) {
+    await assertFails(updateDoc(product, { stock }));
   }
+  await assertFails(updateDoc(product, { stock: 5, price: 0 }));
+  await assertFails(updateDoc(product, { stock: 5, last_order_id: "replace" }));
+  await assertFails(setDoc(doc(inventory, "products", "new"), { stock: 5 }));
+  for (const role of ["sales", "analyst", "inactive", "missing", "missing-active", "missing-role"]) {
+    await assertFails(adjustStock(dbFor(role), "product-doc", 1));
+  }
+});
+
+test("business data edits and deletions are denied", async () => {
   const admin = dbFor("admin");
   await assertFails(updateDoc(doc(admin, "orders", "historical"), { status: "Returned" }));
   await assertFails(deleteDoc(doc(admin, "orders", "historical")));
@@ -136,4 +166,13 @@ test("deactivating a profile immediately removes Firestore access for an existin
   });
   await assertFails(getDocs(collection(db, "customers")));
   await assertFails(placeOrder(db, "revoked-order", 6));
+});
+
+test("an inventory manager loses stock permissions when the profile is deactivated", async () => {
+  const db = dbFor("inventory");
+  await assertSucceeds(adjustStock(db, "legacy", 1));
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), "users", "inventory"), { active: false });
+  });
+  await assertFails(adjustStock(db, "legacy", 1));
 });

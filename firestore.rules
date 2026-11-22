@@ -24,6 +24,16 @@ service cloud.firestore {
       return hasRole(['admin', 'sales']);
     }
 
+    function canAdjustStock() {
+      return hasRole(['admin', 'inventory']);
+    }
+
+    function validIndependentStockAdjustment() {
+      let next = request.resource.data;
+      return next.diff(resource.data).affectedKeys().hasOnly(['stock'])
+        && next.stock is int && next.stock >= 0 && next.stock <= 9007199254740991;
+    }
+
     function validStockUpdate(productId) {
       let next = request.resource.data;
       let orderPath = /databases/$(database)/documents/orders/$(next.last_order_id);
@@ -83,7 +93,8 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if canReadDashboard();
-      allow update: if canCreateOrder() && validStockUpdate(productId);
+      allow update: if (canAdjustStock() && validIndependentStockAdjustment())
+        || (canCreateOrder() && validStockUpdate(productId));
     }
 
     match /orders/{orderId} {

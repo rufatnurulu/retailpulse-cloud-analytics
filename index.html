@@ -71,6 +71,19 @@
   </div>
 </section>
 
+<section class="order-panel" id="stock-panel" hidden aria-labelledby="stock-heading">
+  <h2 id="stock-heading">Adjust stock</h2>
+  <form id="stock-form">
+    <label>Product <select id="stock-product" required></select></label>
+    <label>Quantity change
+      <input id="stock-adjustment" type="number" step="1" required aria-describedby="stock-help">
+    </label>
+    <button type="submit" disabled>Update stock</button>
+  </form>
+  <p id="stock-help">Enter a positive number to add stock or a negative number to remove it.</p>
+  <p id="stock-message" role="status"></p>
+</section>
+
 <div class="filters">
 
 <section class="order-panel">

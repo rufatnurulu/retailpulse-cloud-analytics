@@ -15,6 +15,7 @@ import {
   runTransaction
 } from "firebase/firestore";
 import Chart from "chart.js/auto";
+import { adjustStock } from "./stock.js";
 
 const $ = selector => document.querySelector(selector);
 
@@ -36,10 +37,12 @@ let currentUserRole = null;
 
 const roles = ["admin", "sales", "inventory", "analyst"];
 const canOrder = () => ["admin", "sales"].includes(currentUserRole);
+const canAdjustStock = () => ["admin", "inventory"].includes(currentUserRole);
 const canExport = () => ["admin", "analyst"].includes(currentUserRole);
 
 function applyRoleToUI() {
   $("#order-form").closest(".order-panel").hidden = !canOrder();
+  $("#stock-panel").hidden = !canAdjustStock();
   $("#export-csv").hidden = !canExport();
   $("#user-role").textContent = currentUserRole ? `Role: ${currentUserRole}` : "";
 }
@@ -57,6 +60,9 @@ function resetDashboard() {
   $("#dashboard-content").hidden = true;
   $("#order-form").reset();
   $("#order-message").textContent = "";
+  $("#stock-form").reset();
+  $("#stock-message").textContent = "";
+  populateStockForm();
   applyRoleToUI();
 }
 
@@ -141,6 +147,7 @@ onAuthStateChanged(auth, user => {
           products = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
           populateCategories();
           populateOrderForm();
+          populateStockForm();
           renderInventory();
           updateDashboard();
         }, onDataError);
@@ -478,6 +485,53 @@ $("#order-form").addEventListener("submit", async event => {
   }
 });
 
+function populateStockForm() {
+  const select = $("#stock-product");
+  const selected = select.value;
+  select.replaceChildren(new Option("Select product", ""));
+  if (!canAdjustStock()) return;
+  for (const product of products) {
+    select.add(new Option(product.product_name, product.id));
+  }
+  if (products.some(product => product.id === selected)) select.value = selected;
+  if ($("#stock-form").ariaBusy !== "true") {
+    $("#stock-form button").disabled = !products.length;
+  }
+}
+
+$("#stock-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!canAdjustStock() || form.ariaBusy === "true") return;
+
+  const button = form.querySelector("button");
+  const status = $("#stock-message");
+  const productId = $("#stock-product").value;
+  const change = $("#stock-adjustment").valueAsNumber;
+  const version = loadVersion;
+
+  if (!products.some(product => product.id === productId) || !Number.isSafeInteger(change) || change === 0) {
+    status.textContent = "Select a product and enter a nonzero whole number.";
+    return;
+  }
+
+  form.ariaBusy = "true";
+  button.disabled = true;
+  status.textContent = "Updating stock…";
+  try {
+    const stock = await adjustStock(db, productId, change);
+    if (version !== loadVersion) return;
+    status.textContent = `Stock updated to ${stock} units.`;
+    form.reset();
+  } catch (error) {
+    if (version !== loadVersion) return;
+    status.textContent = error.code ? "Could not update stock. Check your access and connection." : error.message;
+  } finally {
+    form.ariaBusy = "false";
+    button.disabled = !canAdjustStock() || !products.length;
+  }
+});
+
 function renderInventory() {
   const search = $("#inventory-search").value
     .toLowerCase()
@@ -494,7 +548,7 @@ function renderInventory() {
   let lowStockCount = 0;
 
   for (const product of products) {
-    if (Number(product.stock) <= 5) {
+    if (!Number.isSafeInteger(product.stock) || product.stock <= 5) {
       lowStockCount++;
     }
   }
@@ -503,9 +557,10 @@ function renderInventory() {
     `${lowStockCount} products need attention`;
 
   for (const product of filteredProducts) {
-    const stock = Number(product.stock);
+    const stock = product.stock;
 
     const status =
+      !Number.isSafeInteger(stock) ? "Stock not set" :
       stock === 0 ? "Out of Stock" :
       stock <= 5 ? "Low Stock" :
       "In Stock";
@@ -515,8 +570,8 @@ function renderInventory() {
     const values = [
       product.product_name,
       product.category,
-      money(Number(product.price)),
-      String(stock),
+      money(Number(product.price ?? product.unit_price)),
+      Number.isSafeInteger(stock) ? String(stock) : "—",
       status
     ];
 

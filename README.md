@@ -29,12 +29,18 @@ Each Firebase Authentication UID needs a Firestore document at `users/{uid}`
 with an `active` boolean and a `role` string. Manage profiles through Firebase
 Console or the Admin SDK. The web app can read the signed-in user's own profile.
 
-| Role | Dashboard and inventory | Create sale and deduct stock | CSV button |
-| --- | --- | --- | --- |
-| `admin` | Yes | Yes | Yes |
-| `sales` | Yes | Yes | No |
-| `inventory` | Yes | No | No |
-| `analyst` | Yes | No | Yes |
+| Role | Dashboard and inventory | Create sale and deduct stock | Adjust stock independently | CSV button |
+| --- | --- | --- | --- | --- |
+| `admin` | Yes | Yes | Yes | Yes |
+| `sales` | Yes | Yes | No | No |
+| `inventory` (Inventory Manager) | Yes | No | Yes | No |
+| `analyst` | Yes | No | No | Yes |
+
+Inventory Managers and admins can enter a signed quantity change in **Adjust
+stock**. The app reads and updates the latest stock in one transaction, including
+for older products without a stock field. Firestore permits changes only to the
+stock field and requires a nonnegative safe integer. Sales continue to deduct
+stock through the atomic order transaction.
 
 CSV visibility is a UI feature. All four roles have Firestore read access to
 the data backing the dashboard.
@@ -51,6 +57,11 @@ Build the reviewed frontend with the target project's Firebase web configuration
 and run the Firestore emulator suite before approval. For a hosted rehearsal, use
 a separate staging Firebase project and build the frontend with that project's
 configuration. A Hosting preview URL uses the backend selected by the build.
+
+Before approving publication, compare the reviewed `firestore.rules` with the
+unpublished Firebase Console draft. Bring the draft up to the reviewed version,
+including the profile guard and independent stock rule, and verify the matching
+frontend and rules together in staging.
 
 After approval, confirm the production project and its default Hosting site.
 In one release window, use the same reviewed checkout for the compiled frontend
