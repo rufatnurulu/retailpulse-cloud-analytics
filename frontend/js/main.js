@@ -58,6 +58,7 @@ function resetData() {
   productsChart?.destroy();
   salesChart = productsChart = null;
   dashboardContent.hidden = true;
+  document.querySelectorAll("[data-nav]").forEach(link => { link.hidden = true; });
   $("#user-role").hidden = true;
   $("#order-form").reset();
   $("#order-message").textContent = "";
@@ -155,6 +156,10 @@ onAuthStateChanged(auth, user => {
     $("#order-form").closest(".order-panel").hidden = !access.createOrder;
     $("#stock-form").closest(".stock-panel").hidden = !access.adjustStock;
     $("#export-csv").hidden = !access.export;
+    $("[data-nav=analytics]").hidden = !access.orders;
+    $("[data-nav=inventory]").hidden = false;
+    $("[data-nav=stock]").hidden = !access.adjustStock;
+    $("[data-nav=order]").hidden = !access.createOrder;
     $("#overview-period").textContent = access.orders ? "Retail Performance Overview" : "Inventory Management";
     status.textContent = "Loading workspace…";
 
@@ -265,10 +270,16 @@ function updateDashboard() {
     filtered.map(order => order.customer_id)
   ).size;
 
-  $("#revenue").textContent = money(revenue);
-  $("#orders").textContent = filtered.length;
-  $("#average").textContent = money(average);
-  $("#customers").textContent = activeCustomers;
+  $("#revenue").textContent = filtered.length ? money(revenue) : "—";
+  $("#orders").textContent = filtered.length.toLocaleString("en-US");
+  $("#average").textContent = completed.length ? money(average) : "—";
+  $("#customers").textContent = activeCustomers.toLocaleString("en-US");
+  $("#export-csv").disabled = !filtered.length;
+  $("#analytics-empty").hidden = Boolean(completed.length);
+  $("#analytics-empty").textContent = filtered.length
+    ? "No completed orders match this period and category."
+    : "No orders match this period and category.";
+  $("#analytics-charts").hidden = !completed.length;
 
   updateSalesChart(completed, month);
   updateProductsChart(completed);
@@ -289,13 +300,18 @@ function updateSalesChart(completed, month) {
       datasets: [{
         label: "Completed Sales (AZN)",
         data: monthly.map(({ total }) => total),
-        backgroundColor: "#2563eb",
+        backgroundColor: "#765bd9",
         borderRadius: 6
       }]
     },
     options: {
       responsive: true,
-      maintainAspectRatio: false
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: item => money(item.raw) } }
+      }
     }
   });
 }
@@ -331,14 +347,19 @@ function updateProductsChart(completed) {
       datasets: [{
         label: "Revenue (AZN)",
         data: topFive.map(([, revenue]) => revenue),
-        backgroundColor: "#0d9488",
+        backgroundColor: "#257e70",
         borderRadius: 6
       }]
     },
     options: {
       indexAxis: "y",
       responsive: true,
-      maintainAspectRatio: false
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: item => money(item.raw) } }
+      }
     }
   });
 }
@@ -348,7 +369,7 @@ $("#month-filter").addEventListener("change", updateDashboard);
 $("#category-filter").addEventListener("change", updateDashboard);
 
 $("#export-csv").addEventListener("click", () => {
-  if (!access.export || dashboardContent.hidden) return;
+  if (!access.export || dashboardContent.hidden || $("#export-csv").disabled) return;
   const filtered = getFilteredOrders();
 
   const columns = [
@@ -451,7 +472,9 @@ $("#order-form").addEventListener("submit", async event => {
     form.reset();
   } catch (error) {
     if (version !== dataVersion) return;
-    message.textContent = error.code ? "Could not save the order. Check your access and connection." : error.message;
+    message.textContent = error.code === "permission-denied"
+      ? "Firestore denied this order. Stock was not changed."
+      : error.code ? "Could not save the order. Check your connection and try again." : error.message;
   } finally {
     button.disabled = false;
   }
@@ -497,7 +520,9 @@ $("#stock-form").addEventListener("submit", async event => {
     form.reset();
   } catch (error) {
     if (version !== dataVersion) return;
-    status.textContent = error.code ? "Could not update stock. Check your access and connection." : error.message;
+    status.textContent = error.code === "permission-denied"
+      ? "Your current access does not allow this stock change."
+      : error.code ? "Could not update stock. Check your connection and try again." : error.message;
   } finally {
     form.ariaBusy = "false";
     button.disabled = !access.adjustStock || !products.length;
@@ -547,8 +572,7 @@ function renderInventory() {
       product.product_name,
       product.category,
       money(Number(product.price ?? product.unit_price)),
-      Number.isSafeInteger(stock) ? String(stock) : "—",
-      status
+      Number.isSafeInteger(stock) ? stock.toLocaleString("en-US") : "—"
     ];
 
     for (const value of values) {
@@ -557,6 +581,12 @@ function renderInventory() {
       row.appendChild(cell);
     }
 
+    const statusCell = row.insertCell();
+    const badge = document.createElement("span");
+    badge.className = "stock-status";
+    badge.dataset.attention = String(!Number.isSafeInteger(stock) || stock <= 5);
+    badge.textContent = status;
+    statusCell.appendChild(badge);
     body.appendChild(row);
   }
 }

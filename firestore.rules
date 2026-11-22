@@ -1,90 +1,101 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    function signedIn() {
-  return request.auth != null;
-}
-
-    function userProfile() {
-  return get(
-    /databases/$(database)/documents/users/$(request.auth.uid)
-  ).data;
-}
-
-function isAdmin() {
-  return signedIn()
-    && userProfile().active == true
-    && userProfile().role == 'admin';
-}
-    function canAdjustStock() {
-      return signedIn()
-        && userProfile().active == true
-        && userProfile().role in ['admin', 'inventory'];
+    function hasRole(roles) {
+      return request.auth != null && activeRole(request.auth.uid, roles);
     }
 
-match /users/{userId} {
-  allow read: if request.auth != null
-    && request.auth.uid == userId;
-
-  allow create, update, delete: if false;
-}
-    match /customers/{documentId} {
-      allow read: if signedIn();
-      allow write: if false;
+    function activeRole(uid, roles) {
+      let profilePath = /databases/$(database)/documents/users/$(uid);
+      return exists(profilePath) && validProfile(get(profilePath).data, roles);
     }
 
-    match /products/{documentId} {
-      allow read: if signedIn();
-
-      allow update: if canAdjustStock()
-        && request.resource.data.diff(resource.data)
-          .affectedKeys().hasOnly(['stock'])
-        && request.resource.data.stock is int
-        && request.resource.data.stock >= 0
-        && request.resource.data.stock <= 9007199254740991;
-
-      allow create, delete: if false;
+    function validProfile(profile, roles) {
+      return profile.keys().hasAll(['active', 'role'])
+        && profile.active is bool && profile.active == true
+        && profile.role is string && profile.role in roles;
     }
 
-    match /orders/{documentId} {
-      allow read: if signedIn();
+    function validId(id) {
+      return id is string && id.matches('[A-Za-z0-9_-]{1,128}');
+    }
 
-      allow create: if isAdmin()
-        && request.resource.data.keys().hasAll([
-          'order_id',
-          'customer_id',
-          'product_id',
-          'order_date',
-          'quantity',
-          'unit_price',
-          'total_amount',
-          'status'
-        ])
-        && request.resource.data.keys().hasOnly([
-          'order_id',
-          'customer_id',
-          'product_id',
-          'order_date',
-          'quantity',
-          'unit_price',
-          'total_amount',
-          'status'
-        ])
-        && request.resource.data.order_id is string
-        && request.resource.data.customer_id is string
-        && request.resource.data.product_id is string
-        && request.resource.data.order_date is string
-        && request.resource.data.quantity is int
-        && request.resource.data.quantity > 0
-        && request.resource.data.unit_price is number
-        && request.resource.data.unit_price >= 0
-        && request.resource.data.total_amount is number
-        && request.resource.data.total_amount >= 0
-        && request.resource.data.status == 'Completed';
+    function validStock(stock) {
+      return stock is int && stock >= 0 && stock <= 9007199254740991;
+    }
 
-      allow update, delete: if false;
+    function orderStockChange(productDocId) {
+      let next = request.resource.data;
+      let orderPath = /databases/$(database)/documents/orders/$(next.last_order_id);
+      let order = getAfter(orderPath).data;
+      return next.diff(resource.data).affectedKeys().hasOnly(['stock', 'last_order_id'])
+        && validId(next.last_order_id)
+        && !exists(orderPath)
+        && order.product_doc_id == productDocId
+        && validStock(resource.data.stock)
+        && resource.data.stock - next.stock == order.quantity;
+    }
+
+    function isToday(date) {
+      let parts = date.split('-');
+      return int(parts[0]) == request.time.year()
+        && int(parts[1]) == request.time.month()
+        && int(parts[2]) == request.time.day();
+    }
+
+    function validOrder(orderId) {
+      let order = request.resource.data;
+      let fields = ['order_id', 'customer_id', 'customer_doc_id', 'product_id', 'product_doc_id',
+        'order_date', 'created_at', 'quantity', 'unit_price', 'total_amount', 'status'];
+      return order.keys().hasAll(fields) && order.keys().hasOnly(fields)
+        && validId(orderId) && order.order_id == orderId
+        && order.customer_id is string && order.product_id is string
+        && validId(order.product_doc_id) && validId(order.customer_doc_id)
+        && order.order_date is string && order.order_date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && isToday(order.order_date)
+        && order.created_at == request.time && order.status == 'Completed'
+        && order.quantity is int && order.quantity > 0 && order.quantity <= 1000000
+        && order.unit_price is number && order.unit_price >= 0
+        && order.total_amount is number && order.total_amount >= 0
+        && validOrderReferences(orderId, order);
+    }
+
+    function validOrderReferences(orderId, order) {
+      let productPath = /databases/$(database)/documents/products/$(order.product_doc_id);
+      let customer = get(/databases/$(database)/documents/customers/$(order.customer_doc_id)).data;
+      let product = get(productPath).data;
+      let next = getAfter(productPath).data;
+      let price = product.get('price', null);
+      let cents = order.unit_price * order.quantity * 100;
+      return order.customer_id == customer.customer_id && order.product_id == product.product_id
+        && order.unit_price == (price == null ? product.get('unit_price', null) : price)
+        && cents <= 9007199254740991
+        && order.total_amount == math.round(cents) / 100.0
+        && next.last_order_id == orderId && product.get('last_order_id', null) != orderId
+        && validStock(next.stock) && validStock(product.stock)
+        && product.stock - next.stock == order.quantity;
+    }
+
+    match /users/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /products/{productDocId} {
+      allow read: if hasRole(['admin', 'sales', 'inventory', 'analyst']);
+      allow update: if validStock(request.resource.data.stock) && (
+        (hasRole(['admin', 'inventory'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
+        || (hasRole(['admin', 'sales']) && orderStockChange(productDocId))
+      );
+    }
+
+    match /customers/{customerDocId} {
+      allow read: if hasRole(['admin', 'sales']);
+    }
+
+    match /orders/{orderId} {
+      allow read: if hasRole(['admin', 'sales', 'analyst']);
+      allow create: if hasRole(['admin', 'sales']) && validOrder(orderId);
     }
   }
 }
