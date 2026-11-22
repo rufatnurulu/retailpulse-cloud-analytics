@@ -40,3 +40,25 @@ export function monthlyRevenue(completedOrders, month) {
     month === "all" || Number(month) === index + 1 ? [{ label, total: totals[index] }] : []
   );
 }
+
+export function ordersCsv(orders) {
+  const columns = [
+    "order_id", "customer_id", "product_id",
+    "order_date", "quantity", "unit_price",
+    "total_amount", "status"
+  ];
+
+  const escapeCsv = value => {
+    const safeValue = typeof value === "string" && /^(?:\s*[=+@-]|[\t\r\n])/.test(value)
+      ? `'${value}`
+      : value;
+    return `"${String(safeValue ?? "").replace(/"/g, '""')}"`;
+  };
+
+  return [
+    columns.join(","),
+    ...orders.map(order =>
+      columns.map(key => escapeCsv(order[key])).join(",")
+    )
+  ].join("\r\n");
+}

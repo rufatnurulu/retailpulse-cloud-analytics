@@ -51,7 +51,7 @@ test("collection reads follow the active workspace role", async () => {
     inventory: ["products"],
     analyst: ["products", "orders"]
   };
-  const profiles = [...roles, "inactive", "missing", "invalid", "invalid-active", "invalid-role-type", "anonymous"];
+  const profiles = [...roles, "inactive", "missing", "invalid", "missing-role", "missing-active", "invalid-active", "invalid-role-type", "anonymous"];
   for (const role of profiles) {
     const db = role === "anonymous" ? environment.unauthenticatedContext().firestore() : dbFor(role);
     for (const name of ["products", "customers", "orders"]) {

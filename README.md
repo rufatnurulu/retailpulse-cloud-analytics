@@ -19,7 +19,7 @@ The desktop overview and mobile inventory were captured in Chrome with the repos
 - Order entry with Firestore validation and an atomic stock deduction.
 - CSV export of the same orders used by the analytics filters.
 
-Revenue and average order value use completed orders. Order count and distinct customer count use all matching orders. The inventory table shows current stock independently of the historical sales period and follows the category filter.
+Revenue and average order value use completed orders. Order count uses all matching statuses. Unique customer count uses distinct nonempty customer IDs from those orders. CSV output preserves the selected filters and escapes spreadsheet formula prefixes. The inventory table shows current stock independently of the historical sales period and follows the category filter.
 
 | Role | Products | Orders and analytics | Customer directory | Create orders | Adjust stock | CSV button |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ Firebase profile documents need an approved lowercase `role` and Boolean `active
 
 ## Status
 
-The hosted dashboard, independent stock adjustments, and atomic order creation are live. The active production ruleset is `1b8d2d75-ec37-41c4-bcde-5828d462e113`. The pending rules change narrows collection reads to the workspace roles above and preserves the live write rules. See [Manual final steps](MANUAL_FINAL_STEPS.md).
+The hosted dashboard, independent stock adjustments, and atomic order creation are live. The active production ruleset is `1b8d2d75-ec37-41c4-bcde-5828d462e113`. The pending rules change narrows collection reads to the workspace roles above and preserves the live order and stock write permissions. See [Manual final steps](MANUAL_FINAL_STEPS.md).
 
 Order dates use UTC. A submission that crosses midnight UTC between the client timestamp and the server commit can be rejected safely and retried with the new date. Failed orders leave inventory unchanged.
 

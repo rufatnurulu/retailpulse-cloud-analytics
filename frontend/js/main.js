@@ -13,7 +13,7 @@ import {
   onSnapshot
 } from "firebase/firestore";
 import { BarController, BarElement, CategoryScale, Chart, Filler, LineController, LineElement, LinearScale, PointElement, Tooltip } from "chart.js";
-import { filterOrders, monthlyRevenue, months, orderYears } from "./analytics.js";
+import { filterOrders, monthlyRevenue, months, orderYears, ordersCsv } from "./analytics.js";
 import { createOrder } from "./orders.js";
 import { adjustStock } from "./stock.js";
 
@@ -146,7 +146,9 @@ const money = value => currency.format(value);
 loginForm.addEventListener("submit", async event => {
   event.preventDefault();
   const button = loginForm.querySelector("button");
+  if (button.disabled) return;
   button.disabled = true;
+  message.dataset.state = "pending";
   message.textContent = "Signing in…";
 
   try {
@@ -157,6 +159,7 @@ loginForm.addEventListener("submit", async event => {
     );
     message.textContent = "";
   } catch {
+    message.dataset.state = "error";
     message.textContent = "Could not sign in. Check your credentials and connection.";
   } finally {
     button.disabled = false;
@@ -323,7 +326,7 @@ function updateDashboard() {
     : 0;
 
   const activeCustomers = new Set(
-    filtered.map(order => order.customer_id)
+    filtered.map(order => order.customer_id).filter(id => typeof id === "string" && id.trim())
   ).size;
 
   $("#revenue").textContent = completed.length ? money(revenue) : "—";
@@ -469,25 +472,7 @@ $("#export-csv").addEventListener("click", () => {
   if (!access.export || dashboardContent.hidden || $("#export-csv").disabled) return;
   const filtered = getFilteredOrders();
 
-  const columns = [
-    "order_id", "customer_id", "product_id",
-    "order_date", "quantity", "unit_price",
-    "total_amount", "status"
-  ];
-
-  const escapeCsv = value => {
-    const safeValue = typeof value === "string" && /^(?:\s*[=+@-]|[\t\r\n])/.test(value)
-      ? `'${value}`
-      : value;
-    return `"${String(safeValue ?? "").replace(/"/g, '""')}"`;
-  };
-
-  const csv = [
-    columns.join(","),
-    ...filtered.map(order =>
-      columns.map(key => escapeCsv(order[key])).join(",")
-    )
-  ].join("\r\n");
+  const csv = ordersCsv(filtered);
 
   const blob = new Blob([csv], {
     type: "text/csv;charset=utf-8"
@@ -551,14 +536,21 @@ function populateOrderForm() {
 
 function updateOrderProductDetail() {
   const product = products.find(item => item.id === $("#order-product").value);
+  const quantity = $("#order-quantity").valueAsNumber;
+  const price = product?.price ?? product?.unit_price;
+  const validQuantity = Number.isInteger(quantity) && quantity > 0 && quantity <= 1000000;
+  const cents = price * quantity * 100;
+  const total = validQuantity && cents <= Number.MAX_SAFE_INTEGER
+    ? ` · ${money(Math.round(cents) / 100)} total` : "";
   $("#order-product-detail").textContent = product
-    ? `${money(product.price ?? product.unit_price)} per unit · ${product.stock.toLocaleString("en-US")} available`
+    ? `${money(price)} per unit · ${product.stock.toLocaleString("en-US")} available${total}`
     : "Select a product to see its price and available stock.";
 }
 
 $("#customer-search").addEventListener("input", populateOrderForm);
 $("#product-search").addEventListener("input", populateOrderForm);
 $("#order-product").addEventListener("change", updateOrderProductDetail);
+$("#order-quantity").addEventListener("input", updateOrderProductDetail);
 
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -574,22 +566,26 @@ $("#order-form").addEventListener("submit", async event => {
   const quantity = Number($("#order-quantity").value);
 
   if (!customer || !product || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000000) {
+    message.dataset.state = "error";
     message.textContent = "Select a customer and product and enter a valid quantity.";
     return;
   }
 
   button.disabled = true;
+  message.dataset.state = "pending";
   message.textContent = "Saving order…";
 
   try {
     const orderId = await createOrder(db, customer.id, product.id, quantity);
 
     if (version !== dataVersion) return;
+    message.dataset.state = "success";
     message.textContent = `Order saved. ID: ${orderId}`;
     form.reset();
     populateOrderForm();
   } catch (error) {
     if (version !== dataVersion) return;
+    message.dataset.state = "error";
     message.textContent = error.code === "permission-denied"
       ? "Firestore denied this order. Stock was not changed."
       : error.code ? "Could not save the order. Check your connection and try again." : error.message;
@@ -624,20 +620,24 @@ $("#stock-form").addEventListener("submit", async event => {
   const version = dataVersion;
 
   if (!products.some(product => product.id === productId) || !Number.isSafeInteger(change) || change === 0) {
+    status.dataset.state = "error";
     status.textContent = "Select a product and enter a nonzero whole number.";
     return;
   }
 
   form.ariaBusy = "true";
   button.disabled = true;
+  status.dataset.state = "pending";
   status.textContent = "Updating stock…";
   try {
     const stock = await adjustStock(db, productId, change);
     if (version !== dataVersion) return;
+    status.dataset.state = "success";
     status.textContent = `Stock updated to ${stock} units.`;
     form.reset();
   } catch (error) {
     if (version !== dataVersion) return;
+    status.dataset.state = "error";
     status.textContent = error.code === "permission-denied"
       ? "Your current access does not allow this stock change."
       : error.code ? "Could not update stock. Check your connection and try again." : error.message;
