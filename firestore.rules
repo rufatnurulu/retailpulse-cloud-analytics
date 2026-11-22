@@ -16,92 +16,86 @@ service cloud.firestore {
         && profile.role is string && profile.role in roles;
     }
 
-    function canReadDashboard() {
-      return hasRole(['admin', 'sales', 'inventory', 'analyst']);
+    function validId(id) {
+      return id is string && id.matches('[A-Za-z0-9_-]{1,128}');
     }
 
-    function canCreateOrder() {
-      return hasRole(['admin', 'sales']);
+    function validStock(stock) {
+      return stock is int && stock >= 0 && stock <= 9007199254740991;
     }
 
-    function canAdjustStock() {
-      return hasRole(['admin', 'inventory']);
-    }
-
-    function validIndependentStockAdjustment() {
-      let next = request.resource.data;
-      return next.diff(resource.data).affectedKeys().hasOnly(['stock'])
-        && next.stock is int && next.stock >= 0 && next.stock <= 9007199254740991;
-    }
-
-    function validStockUpdate(productId) {
+    function orderStockChange(productDocId) {
       let next = request.resource.data;
       let orderPath = /databases/$(database)/documents/orders/$(next.last_order_id);
       let order = getAfter(orderPath).data;
       return next.diff(resource.data).affectedKeys().hasOnly(['stock', 'last_order_id'])
-        && next.last_order_id is string
+        && validId(next.last_order_id)
         && !exists(orderPath)
-        && order.product_doc_id == productId
-        && order.product_id == resource.data.product_id
-        && resource.data.stock is int
-        && next.stock is int
-        && next.stock >= 0
-        && order.quantity is int
-        && order.quantity > 0
-        && next.stock == resource.data.stock - order.quantity;
+        && order.product_doc_id == productDocId
+        && validStock(resource.data.stock)
+        && resource.data.stock - next.stock == order.quantity;
     }
 
-    function validOrderFields(order, orderId) {
-      let fields = ['order_id', 'customer_id', 'product_id', 'product_doc_id',
-                    'order_date', 'quantity', 'unit_price', 'total_amount', 'status'];
+    function isToday(date) {
+      let parts = date.split('-');
+      return int(parts[0]) == request.time.year()
+        && int(parts[1]) == request.time.month()
+        && int(parts[2]) == request.time.day();
+    }
+
+    function validOrder(orderId) {
+      let order = request.resource.data;
+      let fields = ['order_id', 'customer_id', 'customer_doc_id', 'product_id', 'product_doc_id',
+        'order_date', 'created_at', 'quantity', 'unit_price', 'total_amount', 'status'];
       return order.keys().hasAll(fields) && order.keys().hasOnly(fields)
-        && order.order_id == orderId
-        && order.customer_id is string
-        && order.product_id is string
-        && order.product_doc_id is string
-        && order.order_date is string
-        && order.order_date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
-        && order.quantity is int && order.quantity > 0
+        && validId(orderId) && order.order_id == orderId
+        && order.customer_id is string && order.product_id is string
+        && validId(order.product_doc_id) && validId(order.customer_doc_id)
+        && order.order_date is string && order.order_date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && isToday(order.order_date)
+        && order.created_at == request.time && order.status == 'Completed'
+        && order.quantity is int && order.quantity > 0 && order.quantity <= 1000000
         && order.unit_price is number && order.unit_price >= 0
         && order.total_amount is number && order.total_amount >= 0
-        && order.status == 'Completed';
+        && validOrderReferences(orderId, order);
     }
 
-    function matchesSale(order, orderId) {
+    function validOrderReferences(orderId, order) {
       let productPath = /databases/$(database)/documents/products/$(order.product_doc_id);
-      let before = get(productPath).data;
-      let after = getAfter(productPath).data;
-      let price = before.get('price', null) == null ? before.get('unit_price', null) : before.price;
-      let total = order.quantity * order.unit_price;
-      return exists(/databases/$(database)/documents/customers/$(order.customer_id))
-        && order.product_id == before.product_id
-        && order.unit_price == price
-        && order.total_amount >= total - 0.00501
-        && order.total_amount <= total + 0.00501
-        && after.last_order_id == orderId
-        && before.stock is int && after.stock is int && after.stock >= 0
-        && after.stock == before.stock - order.quantity;
+      let customer = get(/databases/$(database)/documents/customers/$(order.customer_doc_id)).data;
+      let product = get(productPath).data;
+      let next = getAfter(productPath).data;
+      let price = product.get('price', null);
+      let cents = order.unit_price * order.quantity * 100;
+      return order.customer_id == customer.customer_id && order.product_id == product.product_id
+        && order.unit_price == (price == null ? product.get('unit_price', null) : price)
+        && cents <= 9007199254740991
+        && order.total_amount == math.round(cents) / 100.0
+        && next.last_order_id == orderId && product.get('last_order_id', null) != orderId
+        && validStock(next.stock) && validStock(product.stock)
+        && product.stock - next.stock == order.quantity;
     }
 
-    match /users/{userId} {
-      allow get: if request.auth != null && request.auth.uid == userId;
+    match /users/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
     }
 
-    match /customers/{customerId} {
-      allow read: if canReadDashboard();
+    match /products/{productDocId} {
+      allow read: if hasRole(['admin', 'sales', 'inventory', 'analyst']);
+      allow update: if validStock(request.resource.data.stock) && (
+        (hasRole(['admin', 'inventory'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
+        || (hasRole(['admin', 'sales']) && orderStockChange(productDocId))
+      );
     }
 
-    match /products/{productId} {
-      allow read: if canReadDashboard();
-      allow update: if (canAdjustStock() && validIndependentStockAdjustment())
-        || (canCreateOrder() && validStockUpdate(productId));
+    match /customers/{customerDocId} {
+      allow read: if hasRole(['admin', 'sales']);
     }
 
     match /orders/{orderId} {
-      allow read: if canReadDashboard();
-      allow create: if canCreateOrder()
-        && validOrderFields(request.resource.data, orderId)
-        && matchesSale(request.resource.data, orderId);
+      allow read: if hasRole(['admin', 'sales', 'analyst']);
+      allow create: if hasRole(['admin', 'sales']) && validOrder(orderId);
     }
   }
 }

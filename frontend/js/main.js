@@ -10,12 +10,11 @@ import {
 import {
   collection,
   doc,
-  getDocs,
-  onSnapshot,
-  runTransaction
+  onSnapshot
 } from "firebase/firestore";
 import { BarController, BarElement, CategoryScale, Chart, Legend, LinearScale, Tooltip } from "chart.js";
 import { filterOrders, monthlyRevenue, months, orderYears } from "./analytics.js";
+import { createOrder } from "./orders.js";
 import { adjustStock } from "./stock.js";
 
 Chart.register(BarController, BarElement, CategoryScale, Legend, LinearScale, Tooltip);
@@ -25,6 +24,7 @@ const $ = selector => document.querySelector(selector);
 const loginForm = $("#login-form");
 const loginSection = $("#login-section");
 const dashboard = $("#dashboard");
+const dashboardContent = $("#dashboard-content");
 const message = $("#message");
 
 let orders = [];
@@ -32,44 +32,49 @@ let products = [];
 let customers = [];
 let salesChart = null;
 let productsChart = null;
-let loadVersion = 0;
+const permissions = {
+  admin: { orders: true, createOrder: true, adjustStock: true, export: true },
+  sales: { orders: true, createOrder: true },
+  inventory: { adjustStock: true },
+  analyst: { orders: true, export: true }
+};
+
+let access = {};
 let unsubscribeProfile;
-let unsubscribeOrders;
-let unsubscribeProducts;
-let currentUserRole = null;
+let subscriptions = [];
+let session = 0;
+let dataVersion = 0;
+let currentRole;
 
-const roles = ["admin", "sales", "inventory", "analyst"];
-const canOrder = () => ["admin", "sales"].includes(currentUserRole);
-const canAdjustStock = () => ["admin", "inventory"].includes(currentUserRole);
-const canExport = () => ["admin", "analyst"].includes(currentUserRole);
-
-function applyRoleToUI() {
-  $("#order-form").closest(".order-panel").hidden = !canOrder();
-  $("#stock-panel").hidden = !canAdjustStock();
-  $("#export-csv").hidden = !canExport();
-  $("#user-role").textContent = currentUserRole ? `Role: ${currentUserRole}` : "";
-}
-
-function resetDashboard() {
-  ++loadVersion;
-  unsubscribeOrders?.();
-  unsubscribeProducts?.();
-  unsubscribeOrders = null;
-  unsubscribeProducts = null;
-  currentUserRole = null;
+function resetData() {
+  dataVersion++;
+  subscriptions.forEach(unsubscribe => unsubscribe());
+  subscriptions = [];
+  access = {};
   orders = [];
   products = [];
   customers = [];
-  $("#year-filter").replaceChildren();
-  $("#month-filter").value = "all";
-  $("#overview-period").textContent = "Retail Performance Overview";
-  $("#dashboard-content").hidden = true;
+  salesChart?.destroy();
+  productsChart?.destroy();
+  salesChart = productsChart = null;
+  dashboardContent.hidden = true;
+  $("#user-role").hidden = true;
   $("#order-form").reset();
   $("#order-message").textContent = "";
   $("#stock-form").reset();
   $("#stock-message").textContent = "";
+  $("#inventory-search").value = "";
+  $("#year-filter").replaceChildren();
+  $("#month-filter").value = "all";
+  $("#overview-period").textContent = "Retail Performance Overview";
+  $("#category-filter").value = "all";
+  $("#inventory-body").replaceChildren();
+  for (const id of ["revenue", "orders", "average", "customers"]) {
+    $(`#${id}`).textContent = "—";
+  }
+  populateCategories();
+  populateOrderForm();
   populateStockForm();
-  applyRoleToUI();
 }
 
 const money = value =>
@@ -80,7 +85,9 @@ const money = value =>
 
 loginForm.addEventListener("submit", async event => {
   event.preventDefault();
-  message.textContent = "Signing in...";
+  const button = loginForm.querySelector("button");
+  button.disabled = true;
+  message.textContent = "Signing in…";
 
   try {
     await signInWithEmailAndPassword(
@@ -88,91 +95,110 @@ loginForm.addEventListener("submit", async event => {
       $("#email").value,
       $("#password").value
     );
-  } catch (error) {
-    message.textContent = "Login failed. Check your credentials.";
-    console.error(error.code);
+    message.textContent = "";
+  } catch {
+    message.textContent = "Could not sign in. Check your credentials and connection.";
+  } finally {
+    button.disabled = false;
   }
 });
 
 $("#logout").addEventListener("click", async () => {
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch {
+    $("#dashboard-status").textContent = "Could not sign out. Try again.";
+  }
 });
 
 onAuthStateChanged(auth, user => {
+  const currentSession = ++session;
   unsubscribeProfile?.();
-  resetDashboard();
+  currentRole = undefined;
+  resetData();
   loginSection.hidden = Boolean(user);
   dashboard.hidden = !user;
-  message.textContent = "";
+  $("#password").value = "";
   if (!user) return;
 
-  const accessStatus = $("#access-status");
-  accessStatus.textContent = "Checking access…";
-  const isCurrentUser = () => auth.currentUser === user;
+  const status = $("#dashboard-status");
+  status.textContent = "Checking account access…";
 
-  unsubscribeProfile = onSnapshot(
-    doc(db, "users", user.uid),
-    { includeMetadataChanges: true },
-    snapshot => {
-      if (!isCurrentUser() || snapshot.metadata.fromCache) return;
-
-      const profile = snapshot.data();
-      const role = profile?.active === true && roles.includes(profile.role)
-        ? profile.role : null;
-      if (role === null) {
-        resetDashboard();
-        accessStatus.textContent = "Access unavailable. Ask your administrator to check your profile.";
-        return;
+  unsubscribeProfile = onSnapshot(doc(db, "users", user.uid), { includeMetadataChanges: true }, snapshot => {
+    if (currentSession !== session) return;
+    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) {
+      if (currentRole !== undefined) {
+        currentRole = undefined;
+        resetData();
       }
-      if (currentUserRole === role) return;
-
-      resetDashboard();
-      currentUserRole = role;
-      applyRoleToUI();
-      accessStatus.textContent = "Loading data…";
-      const version = loadVersion;
-      const isCurrent = () => isCurrentUser() && version === loadVersion;
-      const onDataError = error => {
-        if (!isCurrent()) return;
-        resetDashboard();
-        accessStatus.textContent = "Unable to load dashboard data. Sign in again to retry.";
-        console.error(error);
-      };
-
-      getDocs(collection(db, "customers")).then(snapshot => {
-        if (!isCurrent()) return;
-        customers = snapshot.docs.map(doc => doc.data());
-        populateOrderForm();
-        renderInventory();
-        updateDashboard();
-        accessStatus.textContent = "";
-        $("#dashboard-content").hidden = false;
-
-        unsubscribeProducts = onSnapshot(collection(db, "products"), snapshot => {
-          if (!isCurrent()) return;
-          products = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-          populateCategories();
-          populateOrderForm();
-          populateStockForm();
-          renderInventory();
-          updateDashboard();
-        }, onDataError);
-
-        unsubscribeOrders = onSnapshot(collection(db, "orders"), snapshot => {
-          if (!isCurrent()) return;
-          orders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-          populateYears();
-          updateDashboard();
-        }, onDataError);
-      }).catch(onDataError);
-    },
-    error => {
-      if (!isCurrentUser()) return;
-      resetDashboard();
-      accessStatus.textContent = "Unable to verify access. Sign in again to retry.";
-      console.error(error);
+      status.textContent = "Waiting to verify access with Firebase…";
+      return;
     }
-  );
+    const profile = snapshot.data();
+    const role = profile?.active === true && typeof profile.role === "string"
+      && Object.hasOwn(permissions, profile.role)
+      ? profile.role
+      : null;
+    if (role === currentRole) return;
+    currentRole = role;
+    resetData();
+
+    if (!role) {
+      status.textContent = "This account has no active role. Contact your Firebase project administrator.";
+      return;
+    }
+
+    access = permissions[role];
+    $("#user-role").textContent = role;
+    $("#user-role").hidden = false;
+    $("#analytics").hidden = !access.orders;
+    $("#order-form").closest(".order-panel").hidden = !access.createOrder;
+    $("#stock-form").closest(".stock-panel").hidden = !access.adjustStock;
+    $("#export-csv").hidden = !access.export;
+    $("#overview-period").textContent = access.orders ? "Retail Performance Overview" : "Inventory Management";
+    status.textContent = "Loading workspace…";
+
+    const version = dataVersion;
+    const sources = { products: rows => { products = rows; } };
+    if (access.orders) sources.orders = rows => {
+      orders = rows;
+      populateYears();
+    };
+    if (access.createOrder) sources.customers = rows => { customers = rows; };
+    const pending = new Set(Object.keys(sources));
+
+    for (const [name, receive] of Object.entries(sources)) {
+      subscriptions.push(onSnapshot(collection(db, name), { includeMetadataChanges: true }, results => {
+        if (version !== dataVersion || results.metadata.hasPendingWrites) return;
+        if (results.metadata.fromCache) {
+          pending.add(name);
+          dashboardContent.hidden = true;
+          status.textContent = "Waiting for synchronized data…";
+          return;
+        }
+        receive(results.docs.map(document => ({ ...document.data(), id: document.id })));
+        pending.delete(name);
+        if (pending.size) return;
+
+        populateCategories();
+        if (access.createOrder) populateOrderForm();
+        if (access.adjustStock) populateStockForm();
+        dashboardContent.hidden = false;
+        renderInventory();
+        if (access.orders) updateDashboard();
+        else status.textContent = `${products.length} products`;
+      }, () => {
+        if (version !== dataVersion) return;
+        currentRole = undefined;
+        resetData();
+        status.textContent = "Workspace access changed or data could not be synchronized. Sign in again to retry.";
+      }));
+    }
+  }, () => {
+    if (currentSession !== session) return;
+    resetData();
+    status.textContent = "Could not verify account access. Sign in again to retry.";
+  });
 });
 
 function populateCategories() {
@@ -210,6 +236,7 @@ function getFilteredOrders() {
 }
 
 function updateDashboard() {
+  if (!access.orders || dashboardContent.hidden) return;
   const year = $("#year-filter").value;
   const month = $("#month-filter").value;
   $("#year-filter").disabled = !year;
@@ -247,7 +274,7 @@ function updateDashboard() {
   updateProductsChart(completed);
 
   $("#dashboard-status").textContent =
-    `${filtered.length} filtered orders · ${products.length} products · ${customers.length} registered customers`;
+    `${filtered.length} filtered orders · ${products.length} products · ${activeCustomers} customers in filtered orders`;
 }
 
 function updateSalesChart(completed, month) {
@@ -321,7 +348,7 @@ $("#month-filter").addEventListener("change", updateDashboard);
 $("#category-filter").addEventListener("change", updateDashboard);
 
 $("#export-csv").addEventListener("click", () => {
-  if (!canExport()) return;
+  if (!access.export || dashboardContent.hidden) return;
   const filtered = getFilteredOrders();
 
   const columns = [
@@ -330,8 +357,12 @@ $("#export-csv").addEventListener("click", () => {
     "total_amount", "status"
   ];
 
-  const escapeCsv = value =>
-    `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const escapeCsv = value => {
+    const safeValue = typeof value === "string" && /^(?:\s*[=+@-]|[\t\r\n])/.test(value)
+      ? `'${value}`
+      : value;
+    return `"${String(safeValue ?? "").replace(/"/g, '""')}"`;
+  };
 
   const csv = [
     columns.join(","),
@@ -358,6 +389,8 @@ function populateOrderForm() {
   const customerSelect = $("#order-customer");
   const productSelect = $("#order-product");
 
+  const selectedCustomer = customerSelect.value;
+  const selectedProduct = productSelect.value;
   customerSelect.innerHTML =
     '<option value="">Select Customer</option>';
 
@@ -366,7 +399,7 @@ function populateOrderForm() {
 
   customers.forEach(customer => {
     const option = document.createElement("option");
-    option.value = customer.customer_id;
+    option.value = customer.id;
     option.textContent =
       customer.customer_name || customer.name || customer.customer_id;
     customerSelect.appendChild(option);
@@ -374,116 +407,51 @@ function populateOrderForm() {
 
   products.forEach(product => {
     const option = document.createElement("option");
-    option.value = product.product_id;
-    option.textContent =
-      `${product.product_name} — ${money(Number(product.price ?? product.unit_price))}`;
+    option.value = product.id;
+    const price = product.price ?? product.unit_price;
+    const hasPrice = Number.isFinite(price) && price >= 0;
+    const hasStock = Number.isSafeInteger(product.stock) && product.stock >= 0;
+    const stock = hasStock ? `${product.stock} available` : "stock not set";
+    option.textContent = `${product.product_name} · ${hasPrice ? money(price) : "price unavailable"} · ${stock}`;
+    option.disabled = !hasPrice || !hasStock || product.stock === 0;
     productSelect.appendChild(option);
   });
+  if (customers.some(customer => customer.id === selectedCustomer)) customerSelect.value = selectedCustomer;
+  if (Array.from(productSelect.options).some(option => option.value === selectedProduct && !option.disabled)) {
+    productSelect.value = selectedProduct;
+  }
 }
 
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();
+  if (!access.createOrder || dashboardContent.hidden) return;
 
-  if (!canOrder()) {
-    $("#order-message").textContent = "Your role cannot create orders.";
-    return;
-  }
-
+  const form = event.currentTarget;
   const message = $("#order-message");
-  const button = $("#order-form button");
-
-  const customerId = $("#order-customer").value;
-  const productId = $("#order-product").value;
+  const button = form.querySelector("button");
+  if (button.disabled) return;
+  const version = dataVersion;
+  const customer = customers.find(item => item.id === $("#order-customer").value);
+  const product = products.find(item => item.id === $("#order-product").value);
   const quantity = Number($("#order-quantity").value);
 
-  const product = products.find(
-    item => item.product_id === productId
-  );
-
-  const customerExists = customers.some(
-    item => item.customer_id === customerId
-  );
-
-  const unitPrice = Number(product?.price ?? product?.unit_price);
-
-  if (
-    !auth.currentUser ||
-    !customerExists ||
-    !product ||
-    !Number.isSafeInteger(quantity) ||
-    quantity <= 0 ||
-    !Number.isFinite(unitPrice) ||
-    unitPrice < 0
-  ) {
-    message.textContent = "Please enter valid order details.";
+  if (!customer || !product || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000000) {
+    message.textContent = "Select a customer and product and enter a valid quantity.";
     return;
   }
 
-  const version = loadVersion;
   button.disabled = true;
-  message.textContent = "Saving to Firestore...";
+  message.textContent = "Saving order…";
 
   try {
-    const productRef = doc(db, "products", product.id);
-    const orderRef = doc(db, "orders", crypto.randomUUID());
+    const orderId = await createOrder(db, customer.id, product.id, quantity);
 
-    await runTransaction(db, async (transaction) => {
-      const productSnapshot = await transaction.get(productRef);
-
-      if (!productSnapshot.exists()) {
-        throw new Error("Product not found.");
-      }
-
-      const currentProduct = productSnapshot.data();
-      const currentStock = Number(currentProduct.stock);
-      const currentPrice = Number(
-        currentProduct.price ?? currentProduct.unit_price
-      );
-
-      if (!Number.isSafeInteger(currentStock) || currentStock < 0) {
-        throw new Error("Invalid product stock.");
-      }
-
-      if (currentStock < quantity) {
-        throw new Error(
-          `Insufficient stock! Only ${currentStock} units available.`
-        );
-      }
-
-      if (!Number.isFinite(currentPrice) || currentPrice < 0) {
-        throw new Error("Invalid product price.");
-      }
-
-      const newStock = currentStock - quantity;
-
-      transaction.update(productRef, {
-        stock: newStock,
-        last_order_id: orderRef.id
-      });
-
-      transaction.set(orderRef, {
-        order_id: orderRef.id,
-        customer_id: customerId,
-        product_id: productId,
-        product_doc_id: product.id,
-        order_date: new Date().toISOString().slice(0, 10),
-        quantity: quantity,
-        unit_price: currentPrice,
-        total_amount: Number((quantity * currentPrice).toFixed(2)),
-        status: "Completed"
-      });
-    });
-
-    if (version !== loadVersion) return;
-    message.textContent =
-      `Order created successfully! ID: ${orderRef.id}`;
-
-    $("#order-form").reset();
+    if (version !== dataVersion) return;
+    message.textContent = `Order saved. ID: ${orderId}`;
+    form.reset();
   } catch (error) {
-    if (version !== loadVersion) return;
-    console.error("Firestore create error:", error);
-    message.textContent =
-      `Failed to create order: ${error.code || error.message}`;
+    if (version !== dataVersion) return;
+    message.textContent = error.code ? "Could not save the order. Check your access and connection." : error.message;
   } finally {
     button.disabled = false;
   }
@@ -493,7 +461,7 @@ function populateStockForm() {
   const select = $("#stock-product");
   const selected = select.value;
   select.replaceChildren(new Option("Select product", ""));
-  if (!canAdjustStock()) return;
+  if (!access.adjustStock) return;
   for (const product of products) {
     select.add(new Option(product.product_name, product.id));
   }
@@ -506,13 +474,13 @@ function populateStockForm() {
 $("#stock-form").addEventListener("submit", async event => {
   event.preventDefault();
   const form = event.currentTarget;
-  if (!canAdjustStock() || form.ariaBusy === "true") return;
+  if (!access.adjustStock || dashboardContent.hidden || form.ariaBusy === "true") return;
 
   const button = form.querySelector("button");
   const status = $("#stock-message");
   const productId = $("#stock-product").value;
   const change = $("#stock-adjustment").valueAsNumber;
-  const version = loadVersion;
+  const version = dataVersion;
 
   if (!products.some(product => product.id === productId) || !Number.isSafeInteger(change) || change === 0) {
     status.textContent = "Select a product and enter a nonzero whole number.";
@@ -524,15 +492,15 @@ $("#stock-form").addEventListener("submit", async event => {
   status.textContent = "Updating stock…";
   try {
     const stock = await adjustStock(db, productId, change);
-    if (version !== loadVersion) return;
+    if (version !== dataVersion) return;
     status.textContent = `Stock updated to ${stock} units.`;
     form.reset();
   } catch (error) {
-    if (version !== loadVersion) return;
+    if (version !== dataVersion) return;
     status.textContent = error.code ? "Could not update stock. Check your access and connection." : error.message;
   } finally {
     form.ariaBusy = "false";
-    button.disabled = !canAdjustStock() || !products.length;
+    button.disabled = !access.adjustStock || !products.length;
   }
 });
 
@@ -548,6 +516,10 @@ function renderInventory() {
 
   const body = $("#inventory-body");
   body.replaceChildren();
+  $("#inventory-empty").hidden = filteredProducts.length > 0;
+  $("#inventory-empty").textContent = products.length
+    ? "No products match your search."
+    : "No products are available.";
 
   let lowStockCount = 0;
 

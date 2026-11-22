@@ -17,13 +17,13 @@
 
         <form id="login-form">
           <input id="email" type="email"
-                 placeholder="Email" required>
+                 placeholder="Email" aria-label="Email" autocomplete="username" required>
           <input id="password" type="password"
-                 placeholder="Password" required>
+                 placeholder="Password" aria-label="Password" autocomplete="current-password" required>
           <button type="submit">Sign In</button>
         </form>
 
-        <p id="message"></p>
+        <p id="message" role="status"></p>
       </div>
     </section>
 
@@ -32,13 +32,15 @@
         <div>
           <h1>RetailPulse Analytics</h1>
           <p id="overview-period">Retail Performance Overview</p>
-          <p id="user-role"></p>
         </div>
-        <button id="logout">Sign Out</button>
+        <div class="session-controls">
+          <span id="user-role" hidden></span>
+          <button id="logout" type="button">Sign Out</button>
+        </div>
       </header>
+      <p id="dashboard-status" role="status">Checking account access…</p>
+      <div id="dashboard-content" hidden>
 
-<p id="access-status" role="status"></p>
-<div id="dashboard-content" hidden>
 <section class="inventory-panel">
   <div class="inventory-header">
     <div>
@@ -52,6 +54,7 @@
   <input
     type="search"
     id="inventory-search"
+    aria-label="Search inventory"
     placeholder="Search products..."
   />
 
@@ -69,43 +72,47 @@
       <tbody id="inventory-body"></tbody>
     </table>
   </div>
+  <p id="inventory-empty" role="status" hidden></p>
 </section>
 
-<section class="order-panel" id="stock-panel" hidden aria-labelledby="stock-heading">
-  <h2 id="stock-heading">Adjust stock</h2>
+<section class="stock-panel" hidden>
+  <h2>Adjust stock</h2>
   <form id="stock-form">
     <label>Product <select id="stock-product" required></select></label>
-    <label>Quantity change
-      <input id="stock-adjustment" type="number" step="1" required aria-describedby="stock-help">
-    </label>
-    <button type="submit" disabled>Update stock</button>
+    <label>Quantity change <input id="stock-adjustment" type="number" step="1" required aria-describedby="stock-help"></label>
+    <button type="submit">Update stock</button>
   </form>
-  <p id="stock-help">Enter a positive number to add stock or a negative number to remove it.</p>
+  <p id="stock-help">Use a positive number to add stock or a negative number to remove it.</p>
   <p id="stock-message" role="status"></p>
 </section>
 
-<div class="filters">
-
-<section class="order-panel">
+<section class="order-panel" hidden>
   <h2>Create New Order</h2>
 
   <form id="order-form">
+    <label>Customer
     <select id="order-customer" required>
       <option value="">Select Customer</option>
     </select>
+    </label>
 
+    <label>Product
     <select id="order-product" required>
       <option value="">Select Product</option>
     </select>
+    </label>
 
+    <label>Quantity
     <input
       id="order-quantity"
+      max="1000000"
       type="number"
       min="1"
       step="1"
       value="1"
       required
     />
+    </label>
 
     <button type="submit">Add Order</button>
   </form>
@@ -113,6 +120,8 @@
   <p id="order-message" role="status"></p>
 </section>
 
+<section id="analytics" aria-label="Sales analytics" hidden>
+<div class="filters">
   <label>
     Year
     <select id="year-filter" disabled></select>
@@ -163,7 +172,7 @@
           <h2 id="average">—</h2>
         </article>
         <article>
-          <span>Total Customers</span>
+          <span>Customers in Orders</span>
           <h2 id="customers">—</h2>
         </article>
       </div>
@@ -182,7 +191,7 @@
   </div>
 </article>
 
-      <p id="dashboard-status">Loading data...</p>
+      </section>
       </div>
     </section>
   </main>

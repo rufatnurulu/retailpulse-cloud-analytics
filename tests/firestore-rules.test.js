@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from "firebase/firestore";
+import { createOrder } from "../frontend/js/orders.js";
 import { adjustStock } from "../frontend/js/stock.js";
 
 const projectId = "demo-retailpulse";
@@ -26,7 +27,11 @@ before(async () => {
     batch.set(doc(db, "users", "missing-role"), { active: true });
     batch.set(doc(db, "users", "missing-active"), { role: "admin" });
     batch.set(doc(db, "users", "invalid-active"), { role: "admin", active: "true" });
-    batch.set(doc(db, "customers", "C0001"), { customer_id: "C0001" });
+    batch.set(doc(db, "users", "invalid-role-type"), { role: ["admin"], active: true });
+    batch.set(doc(db, "customers", "customer-doc"), { customer_id: "C0001" });
+    batch.set(doc(db, "products", "legacy-price"), {
+      product_id: "P003", price: null, unit_price: 1.236, stock: 4
+    });
     batch.set(doc(db, "products", "product-doc"), { product_id: "P001", price: 1.99, stock: 12 });
     batch.set(doc(db, "products", "legacy"), { product_id: "P002", unit_price: 2 });
     batch.set(doc(db, "orders", "historical"), { order_id: "historical", order_date: "2025-01-01" });
@@ -41,14 +46,15 @@ after(async () => {
 const readsByRole = {
   admin: ["products", "customers", "orders"],
   sales: ["products", "customers", "orders"],
-  inventory: ["products", "customers", "orders"],
-  analyst: ["products", "customers", "orders"],
+  inventory: ["products"],
+  analyst: ["products", "orders"],
   inactive: [],
   invalid: [],
   missing: [],
   "missing-role": [],
   "missing-active": [],
   "invalid-active": [],
+  "invalid-role-type": [],
   anonymous: []
 };
 
@@ -77,9 +83,11 @@ function orderData(id, changes) {
   return {
     order_id: id,
     customer_id: "C0001",
+    customer_doc_id: "customer-doc",
     product_id: "P001",
     product_doc_id: "product-doc",
     order_date: new Date().toISOString().slice(0, 10),
+    created_at: serverTimestamp(),
     quantity: 2,
     unit_price: 1.99,
     total_amount: 3.98,
@@ -105,6 +113,10 @@ test("sales can only deduct stock in a valid, atomic order", async () => {
   await assertFails(placeOrder(db, "invalid-total", 10, { total_amount: 3.97 }));
   await assertFails(placeOrder(db, "invalid-customer", 10, { customer_id: "C0002" }));
   await assertFails(placeOrder(db, "invalid-date", 10, { order_date: "not-a-date" }));
+  await assertFails(placeOrder(db, "backdated", 10, { order_date: "2025-01-01" }));
+  await assertFails(placeOrder(db, "invalid-timestamp", 10, { created_at: Timestamp.fromMillis(0) }));
+  await assertFails(placeOrder(db, "invalid-customer-ref", 10, { customer_doc_id: "missing" }));
+  await assertFails(placeOrder(db, "unrounded", 10, { total_amount: 3.981 }));
   await assertFails(placeOrder(db, "invalid-quantity", 9));
   await assertFails(placeOrder(db, "oversold", -1, { quantity: 13, total_amount: 25.87 }));
   await assertFails(placeOrder(dbFor("inventory"), "inventory-order", 10));
@@ -116,6 +128,23 @@ test("sales can only deduct stock in a valid, atomic order", async () => {
   await assertFails(updateDoc(product, { stock: 8, last_order_id: "sales-order" }));
   assert.equal((await getDoc(product)).data().stock, 10);
   await assertSucceeds(placeOrder(dbFor("admin"), "admin-order", 8));
+});
+
+test("the frontend order transaction handles legacy prices and document IDs", async () => {
+  const db = dbFor("sales");
+  const id = await assertSucceeds(createOrder(db, "customer-doc", "legacy-price", 3));
+  const order = (await getDoc(doc(db, "orders", id))).data();
+  assert.equal(order.customer_id, "C0001");
+  assert.equal(order.customer_doc_id, "customer-doc");
+  assert.equal(order.product_id, "P003");
+  assert.equal(order.product_doc_id, "legacy-price");
+  assert.equal(order.unit_price, 1.236);
+  assert.equal(order.total_amount, 3.71);
+  assert.equal(order.created_at.toDate().toISOString().slice(0, 10), order.order_date);
+  const product = (await getDoc(doc(db, "products", "legacy-price"))).data();
+  assert.equal(product.stock, 1);
+  assert.equal(product.last_order_id, id);
+  await assert.rejects(createOrder(db, "customer-doc", "legacy-price", 2), /Only 1 units available/);
 });
 
 test("inventory managers can adjust stock independently and preserve sale and catalog fields", async () => {
@@ -155,7 +184,7 @@ test("business data edits and deletions are denied", async () => {
   await assertFails(updateDoc(doc(admin, "orders", "historical"), { status: "Returned" }));
   await assertFails(deleteDoc(doc(admin, "orders", "historical")));
   await assertFails(deleteDoc(doc(admin, "products", "legacy")));
-  await assertFails(deleteDoc(doc(admin, "customers", "C0001")));
+  await assertFails(deleteDoc(doc(admin, "customers", "customer-doc")));
 });
 
 test("deactivating a profile immediately removes Firestore access for an existing session", async () => {
@@ -166,6 +195,7 @@ test("deactivating a profile immediately removes Firestore access for an existin
   });
   await assertFails(getDocs(collection(db, "customers")));
   await assertFails(placeOrder(db, "revoked-order", 6));
+  await assertFails(createOrder(db, "customer-doc", "legacy-price", 1));
 });
 
 test("an inventory manager loses stock permissions when the profile is deactivated", async () => {

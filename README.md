@@ -29,39 +29,43 @@ Each Firebase Authentication UID needs a Firestore document at `users/{uid}`
 with an `active` boolean and a `role` string. Manage profiles through Firebase
 Console or the Admin SDK. The web app can read the signed-in user's own profile.
 
-| Role | Dashboard and inventory | Create sale and deduct stock | Adjust stock independently | CSV button |
-| --- | --- | --- | --- | --- |
-| `admin` | Yes | Yes | Yes | Yes |
-| `sales` | Yes | Yes | No | No |
-| `inventory` (Inventory Manager) | Yes | No | Yes | No |
-| `analyst` | Yes | No | No | Yes |
+| Role | Products | Orders and analytics | Customer directory | Create orders | Adjust stock | CSV button |
+| --- | --- | --- | --- | --- | --- | --- |
+| Admin | Read | Read | Read | Yes | Yes | Yes |
+| Sales | Read | Read | Read | Yes | — | — |
+| Inventory | Read | — | — | — | Yes | — |
+| Analyst | Read | Read | — | — | — | Yes |
 
-Inventory Managers and admins can enter a signed quantity change in **Adjust
-stock**. The app reads and updates the latest stock in one transaction, including
-for older products without a stock field. Firestore permits changes only to the
-stock field and requires a nonnegative safe integer. Sales continue to deduct
-stock through the atomic order transaction.
+Analysts can see customer IDs in orders for reporting. The customer directory
+is restricted to admin and sales. Anyone who can read orders can retrieve that
+data through Firestore. The CSV button is a dashboard convenience.
 
-CSV visibility is a UI feature. All four roles have Firestore read access to
-the data backing the dashboard.
+Inventory users and admins can adjust stock independently, including for older
+products without stock. Adjustments use a transaction and can only change the
+stock field. Profile writes, business data deletion, and order edits are denied
+to web clients.
 
-Deploy the updated frontend and `firestore.rules` together. The new order
-transaction supports both legacy price fields (`price` and `unit_price`),
-and adds `product_doc_id` to new orders and `last_order_id` to the updated
-product. Existing orders remain readable. The old frontend cannot create sales
-under these rules, so refresh open sessions after rollout.
+Order creation and stock deduction commit together. New orders store product
+and customer document references, a server timestamp, and the current UTC order
+date. Firestore verifies the references, price, rounded total, quantity, and
+stock deduction. Older products can use a numeric `unit_price` when `price` is
+absent or null. Existing orders remain readable under the role permissions above.
+
+Analytics defaults to the latest year available in the orders. The selected year,
+month, and category apply to the KPIs, charts, and CSV export.
 
 ### Coordinated Firebase Hosting release
 
 Build the reviewed frontend with the target project's Firebase web configuration
-and run the Firestore emulator suite before approval. For a hosted rehearsal, use
+and run the frontend and Firestore emulator tests before approval. For a hosted rehearsal, use
 a separate staging Firebase project and build the frontend with that project's
 configuration. A Hosting preview URL uses the backend selected by the build.
 
 Before approving publication, compare the reviewed `firestore.rules` with the
 unpublished Firebase Console draft. Bring the draft up to the reviewed version,
-including the profile guard and independent stock rule, and verify the matching
-frontend and rules together in staging.
+including the role restrictions and order validation. Provision approved user
+profiles and verify the matching frontend and rules together in staging. Older
+frontend sessions must reload before placing orders after the rollout.
 
 After approval, confirm the production project and its default Hosting site.
 In one release window, use the same reviewed checkout for the compiled frontend
