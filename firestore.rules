@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasRole(roles) {
+      return request.auth != null && activeRole(roles);
+    }
+
+    function activeRole(roles) {
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return profile.data.active == true && profile.data.role in roles;
+    }
+
+    function canReadDashboard() {
+      return hasRole(['admin', 'sales', 'inventory', 'analyst']);
+    }
+
+    function canCreateOrder() {
+      return hasRole(['admin', 'sales']);
+    }
+
+    function validStockUpdate(productId) {
+      let next = request.resource.data;
+      let orderPath = /databases/$(database)/documents/orders/$(next.last_order_id);
+      let order = getAfter(orderPath).data;
+      return next.diff(resource.data).affectedKeys().hasOnly(['stock', 'last_order_id'])
+        && next.last_order_id is string
+        && !exists(orderPath)
+        && order.product_doc_id == productId
+        && order.product_id == resource.data.product_id
+        && resource.data.stock is int
+        && next.stock is int
+        && next.stock >= 0
+        && order.quantity is int
+        && order.quantity > 0
+        && next.stock == resource.data.stock - order.quantity;
+    }
+
+    function validOrderFields(order, orderId) {
+      let fields = ['order_id', 'customer_id', 'product_id', 'product_doc_id',
+                    'order_date', 'quantity', 'unit_price', 'total_amount', 'status'];
+      return order.keys().hasAll(fields) && order.keys().hasOnly(fields)
+        && order.order_id == orderId
+        && order.customer_id is string
+        && order.product_id is string
+        && order.product_doc_id is string
+        && order.order_date is string
+        && order.order_date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && order.quantity is int && order.quantity > 0
+        && order.unit_price is number && order.unit_price >= 0
+        && order.total_amount is number && order.total_amount >= 0
+        && order.status == 'Completed';
+    }
+
+    function matchesSale(order, orderId) {
+      let productPath = /databases/$(database)/documents/products/$(order.product_doc_id);
+      let before = get(productPath).data;
+      let after = getAfter(productPath).data;
+      let price = before.get('price', null) == null ? before.get('unit_price', null) : before.price;
+      let total = order.quantity * order.unit_price;
+      return exists(/databases/$(database)/documents/customers/$(order.customer_id))
+        && order.product_id == before.product_id
+        && order.unit_price == price
+        && order.total_amount >= total - 0.00501
+        && order.total_amount <= total + 0.00501
+        && after.last_order_id == orderId
+        && before.stock is int && after.stock is int && after.stock >= 0
+        && after.stock == before.stock - order.quantity;
+    }
+
+    match /users/{userId} {
+      allow get: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /customers/{customerId} {
+      allow read: if canReadDashboard();
+    }
+
+    match /products/{productId} {
+      allow read: if canReadDashboard();
+      allow update: if canCreateOrder() && validStockUpdate(productId);
+    }
+
+    match /orders/{orderId} {
+      allow read: if canReadDashboard();
+      allow create: if canCreateOrder()
+        && validOrderFields(request.resource.data, orderId)
+        && matchesSale(request.resource.data, orderId);
+    }
+  }
+}

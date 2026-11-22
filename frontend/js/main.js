@@ -10,7 +10,6 @@ import {
 import {
   collection,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   runTransaction
@@ -30,28 +29,35 @@ let customers = [];
 let salesChart = null;
 let productsChart = null;
 let loadVersion = 0;
-let unsubscribeOrders = null;
-
-let unsubscribeProducts = null;
+let unsubscribeProfile;
+let unsubscribeOrders;
+let unsubscribeProducts;
 let currentUserRole = null;
 
-async function loadUserRole(user) {
-  const snapshot = await getDoc(doc(db, "users", user.uid));
-  if (!snapshot.exists()) throw new Error("User profile not found.");
-  const profile = snapshot.data();
-  if (profile.active !== true ||
-      !["admin", "sales", "inventory", "analyst"].includes(profile.role)) {
-    throw new Error("Invalid or inactive user profile.");
-  }
-  return profile.role;
-}
+const roles = ["admin", "sales", "inventory", "analyst"];
+const canOrder = () => ["admin", "sales"].includes(currentUserRole);
+const canExport = () => ["admin", "analyst"].includes(currentUserRole);
 
 function applyRoleToUI() {
-  const canOrder = ["admin", "sales"].includes(currentUserRole);
-  $("#order-form").closest(".order-panel").hidden = !canOrder;
-  $("#export-csv").hidden = !["admin", "analyst"].includes(currentUserRole);
-  const badge = $("#user-role");
-  if (badge) badge.textContent = currentUserRole || "";
+  $("#order-form").closest(".order-panel").hidden = !canOrder();
+  $("#export-csv").hidden = !canExport();
+  $("#user-role").textContent = currentUserRole ? `Role: ${currentUserRole}` : "";
+}
+
+function resetDashboard() {
+  ++loadVersion;
+  unsubscribeOrders?.();
+  unsubscribeProducts?.();
+  unsubscribeOrders = null;
+  unsubscribeProducts = null;
+  currentUserRole = null;
+  orders = [];
+  products = [];
+  customers = [];
+  $("#dashboard-content").hidden = true;
+  $("#order-form").reset();
+  $("#order-message").textContent = "";
+  applyRoleToUI();
 }
 
 const money = value =>
@@ -70,7 +76,6 @@ loginForm.addEventListener("submit", async event => {
       $("#email").value,
       $("#password").value
     );
-    message.textContent = "";
   } catch (error) {
     message.textContent = "Login failed. Check your credentials.";
     console.error(error.code);
@@ -81,92 +86,79 @@ $("#logout").addEventListener("click", async () => {
   await signOut(auth);
 });
 
-onAuthStateChanged(auth, async user => {
-  const version = ++loadVersion;
-  currentUserRole = null;
+onAuthStateChanged(auth, user => {
+  unsubscribeProfile?.();
+  resetDashboard();
+  loginSection.hidden = Boolean(user);
+  dashboard.hidden = !user;
+  message.textContent = "";
+  if (!user) return;
 
-  if (unsubscribeOrders) {
-    unsubscribeOrders();
-    unsubscribeOrders = null;
-  }
-  if (unsubscribeProducts) {
-  unsubscribeProducts();
-  unsubscribeProducts = null;
-  }
-  if (!user) {
-    loginSection.hidden = false;
-    dashboard.hidden = true;
-    orders = [];
-    products = [];
-    customers = [];
-    return;
-  }
+  const accessStatus = $("#access-status");
+  accessStatus.textContent = "Checking access…";
+  const isCurrentUser = () => auth.currentUser === user;
 
-  loginSection.hidden = true;
-  dashboard.hidden = false;
-  $("#dashboard-status").textContent = "Loading data...";
+  unsubscribeProfile = onSnapshot(
+    doc(db, "users", user.uid),
+    { includeMetadataChanges: true },
+    snapshot => {
+      if (!isCurrentUser() || snapshot.metadata.fromCache) return;
 
-  try {
-    currentUserRole = await loadUserRole(user);
-    if (version !== loadVersion || !auth.currentUser) return;
-    applyRoleToUI();
+      const profile = snapshot.data();
+      const role = profile?.active === true && roles.includes(profile.role)
+        ? profile.role : null;
+      if (role === null) {
+        resetDashboard();
+        accessStatus.textContent = "Access unavailable. Ask your administrator to check your profile.";
+        return;
+      }
+      if (currentUserRole === role) return;
 
-    const customerDocs = await getDocs(
-  collection(db, "customers")
-);
-    if (version !== loadVersion || !auth.currentUser) return;
+      resetDashboard();
+      currentUserRole = role;
+      applyRoleToUI();
+      accessStatus.textContent = "Loading data…";
+      const version = loadVersion;
+      const isCurrent = () => isCurrentUser() && version === loadVersion;
+      const onDataError = error => {
+        if (!isCurrent()) return;
+        resetDashboard();
+        accessStatus.textContent = "Unable to load dashboard data. Sign in again to retry.";
+        console.error(error);
+      };
 
-    customers = customerDocs.docs.map(doc => doc.data());
-    unsubscribeProducts = onSnapshot(
-  collection(db, "products"),
-  snapshot => {
-    if (version !== loadVersion || !auth.currentUser) return;
+      getDocs(collection(db, "customers")).then(snapshot => {
+        if (!isCurrent()) return;
+        customers = snapshot.docs.map(doc => doc.data());
+        populateOrderForm();
+        renderInventory();
+        updateDashboard();
+        accessStatus.textContent = "";
+        $("#dashboard-content").hidden = false;
 
-    products = snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id
-    }));
+        unsubscribeProducts = onSnapshot(collection(db, "products"), snapshot => {
+          if (!isCurrent()) return;
+          products = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+          populateCategories();
+          populateOrderForm();
+          renderInventory();
+          updateDashboard();
+        }, onDataError);
 
-    populateCategories();
-    populateOrderForm();
-    renderInventory();
-    updateDashboard();
-  },
-  error => {
-    console.error("Products sync error:", error);
-    $("#dashboard-status").textContent =
-      "Unable to synchronize inventory.";
-  }
-);
-unsubscribeOrders = onSnapshot(
-  collection(db, "orders"),
-  snapshot => {
-    if (version !== loadVersion || !auth.currentUser) return;
-
-    orders = snapshot.docs.map(doc => ({
-      ...doc.data(),
-      id: doc.id
-    }));
-
-    updateDashboard();
-  },
-  error => {
-    console.error("Realtime Firestore error:", error);
-    $("#dashboard-status").textContent =
-      "Unable to synchronize orders.";
-  }
-);
-    populateCategories();
-    populateOrderForm();
-    renderInventory();
-    updateDashboard();
-  } catch (error) {
-    if (version !== loadVersion) return;
-    $("#dashboard-status").textContent =
-      error.message || "Failed to load Firestore data.";
-    $("#order-form").closest(".order-panel").hidden = true;
-    console.error(error);
-  }
+        unsubscribeOrders = onSnapshot(collection(db, "orders"), snapshot => {
+          if (!isCurrent()) return;
+          orders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+          updateDashboard();
+        }, onDataError);
+      }).catch(onDataError);
+    },
+    error => {
+      if (!isCurrentUser()) return;
+      resetDashboard();
+      accessStatus.textContent = "Unable to verify access. Sign in again to retry.";
+      console.error(error);
+    }
+  );
 });
 
 function populateCategories() {
@@ -318,6 +310,7 @@ $("#month-filter").addEventListener("change", updateDashboard);
 $("#category-filter").addEventListener("change", updateDashboard);
 
 $("#export-csv").addEventListener("click", () => {
+  if (!canExport()) return;
   const filtered = getFilteredOrders();
 
   const columns = [
@@ -380,7 +373,7 @@ function populateOrderForm() {
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();
 
-  if (!["admin", "sales"].includes(currentUserRole)) {
+  if (!canOrder()) {
     $("#order-message").textContent = "Your role cannot create orders.";
     return;
   }
@@ -415,63 +408,68 @@ $("#order-form").addEventListener("submit", async event => {
     return;
   }
 
+  const version = loadVersion;
   button.disabled = true;
   message.textContent = "Saving to Firestore...";
 
   try {
-  const productRef = doc(db, "products", product.id);
-  const orderRef = doc(collection(db, "orders"));
+    const productRef = doc(db, "products", product.id);
+    const orderRef = doc(db, "orders", crypto.randomUUID());
 
-  await runTransaction(db, async (transaction) => {
-    const productSnapshot = await transaction.get(productRef);
+    await runTransaction(db, async (transaction) => {
+      const productSnapshot = await transaction.get(productRef);
 
-    if (!productSnapshot.exists()) {
-      throw new Error("Product not found.");
-    }
+      if (!productSnapshot.exists()) {
+        throw new Error("Product not found.");
+      }
 
-    const currentProduct = productSnapshot.data();
-    const currentStock = Number(currentProduct.stock);
-    const currentPrice = Number(
-      currentProduct.price ?? currentProduct.unit_price
-    );
-
-    if (!Number.isSafeInteger(currentStock) || currentStock < 0) {
-      throw new Error("Invalid product stock.");
-    }
-
-    if (currentStock < quantity) {
-      throw new Error(
-        `Insufficient stock! Only ${currentStock} units available.`
+      const currentProduct = productSnapshot.data();
+      const currentStock = Number(currentProduct.stock);
+      const currentPrice = Number(
+        currentProduct.price ?? currentProduct.unit_price
       );
-    }
 
-    if (!Number.isFinite(currentPrice) || currentPrice < 0) {
-      throw new Error("Invalid product price.");
-    }
+      if (!Number.isSafeInteger(currentStock) || currentStock < 0) {
+        throw new Error("Invalid product stock.");
+      }
 
-    const newStock = currentStock - quantity;
+      if (currentStock < quantity) {
+        throw new Error(
+          `Insufficient stock! Only ${currentStock} units available.`
+        );
+      }
 
-    transaction.update(productRef, {
-      stock: newStock
+      if (!Number.isFinite(currentPrice) || currentPrice < 0) {
+        throw new Error("Invalid product price.");
+      }
+
+      const newStock = currentStock - quantity;
+
+      transaction.update(productRef, {
+        stock: newStock,
+        last_order_id: orderRef.id
+      });
+
+      transaction.set(orderRef, {
+        order_id: orderRef.id,
+        customer_id: customerId,
+        product_id: productId,
+        product_doc_id: product.id,
+        order_date: new Date().toISOString().slice(0, 10),
+        quantity: quantity,
+        unit_price: currentPrice,
+        total_amount: Number((quantity * currentPrice).toFixed(2)),
+        status: "Completed"
+      });
     });
 
-    transaction.set(orderRef, {
-      order_id: crypto.randomUUID(),
-      customer_id: customerId,
-      product_id: productId,
-      order_date: new Date().toISOString().slice(0, 10),
-      quantity: quantity,
-      unit_price: currentPrice,
-      total_amount: Number((quantity * currentPrice).toFixed(2)),
-      status: "Completed"
-    });
-  });
+    if (version !== loadVersion) return;
+    message.textContent =
+      `Order created successfully! ID: ${orderRef.id}`;
 
-  message.textContent =
-    `Order created successfully! ID: ${orderRef.id}`;
-
-  $("#order-form").reset();
+    $("#order-form").reset();
   } catch (error) {
+    if (version !== loadVersion) return;
     console.error("Firestore create error:", error);
     message.textContent =
       `Failed to create order: ${error.code || error.message}`;
