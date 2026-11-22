@@ -143,6 +143,8 @@ function resetData() {
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "AZN" });
 const money = value => currency.format(value);
 
+const quotaMessage = "The database usage limit has been reached. Try again after quota is available.";
+
 loginForm.addEventListener("submit", async event => {
   event.preventDefault();
   const button = loginForm.querySelector("button");
@@ -252,17 +254,21 @@ onAuthStateChanged(auth, user => {
         renderInventory();
         if (access.orders) updateDashboard();
         else updateWorkspaceSummary();
-      }, () => {
+      }, error => {
         if (version !== dataVersion) return;
         currentRole = undefined;
         resetData();
-        status.textContent = "Workspace access changed or data could not be synchronized. Sign in again to retry.";
+        status.textContent = error.code === "resource-exhausted"
+          ? quotaMessage
+          : "Workspace access changed or data could not be synchronized. Sign in again to retry.";
       }));
     }
-  }, () => {
+  }, error => {
     if (currentSession !== session) return;
     resetData();
-    status.textContent = "Could not verify account access. Sign in again to retry.";
+    status.textContent = error.code === "resource-exhausted"
+      ? quotaMessage
+      : "Could not verify account access. Sign in again to retry.";
   });
 });
 
@@ -586,7 +592,9 @@ $("#order-form").addEventListener("submit", async event => {
   } catch (error) {
     if (version !== dataVersion) return;
     message.dataset.state = "error";
-    message.textContent = error.code === "permission-denied"
+    message.textContent = error.code === "resource-exhausted"
+      ? quotaMessage
+      : error.code === "permission-denied"
       ? "Firestore denied this order. Stock was not changed."
       : error.code ? "Could not save the order. Check your connection and try again." : error.message;
   } finally {
@@ -638,7 +646,9 @@ $("#stock-form").addEventListener("submit", async event => {
   } catch (error) {
     if (version !== dataVersion) return;
     status.dataset.state = "error";
-    status.textContent = error.code === "permission-denied"
+    status.textContent = error.code === "resource-exhausted"
+      ? quotaMessage
+      : error.code === "permission-denied"
       ? "Your current access does not allow this stock change."
       : error.code ? "Could not update stock. Check your connection and try again." : error.message;
   } finally {
