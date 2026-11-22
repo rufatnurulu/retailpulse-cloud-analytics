@@ -11,7 +11,7 @@ RetailPulse is a university portfolio project for retail sales analysis and inve
 - Order entry with Firestore validation and an atomic stock deduction.
 - CSV export of the same orders used by the analytics filters.
 
-Revenue and average order value use completed orders. Order count and distinct customer count use all matching orders. The inventory table shows current stock independently of the historical sales period.
+Revenue and average order value use completed orders. Order count and distinct customer count use all matching orders. The inventory table shows current stock independently of the historical sales period and follows the category filter.
 
 | Role | Products | Orders and analytics | Customer directory | Create orders | Adjust stock | CSV button |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ Firebase profile documents need an approved lowercase `role` and Boolean `active
 
 ## Status
 
-The hosted dashboard and independent stock adjustments use the existing production rules. Order creation with the new payload passes local emulator tests. It requires separate approval to publish the updated rules. The patch preserves the existing authenticated read policy and independent stock adjustments.
+The hosted dashboard and independent stock adjustments use production ruleset `5dddb831-e4fd-4a43-865c-b470c5b59ef6`. Order creation with the new payload passes local emulator tests. It requires separate approval to publish the updated rules. The patch preserves the existing authenticated read policy and independent stock adjustments.
 
 ## CV summary
 

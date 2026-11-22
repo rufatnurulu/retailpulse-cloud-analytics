@@ -255,7 +255,7 @@ function updateDashboard() {
   const filtered = getFilteredOrders();
 
   const completed = filtered.filter(
-    order => order.status === "Completed"
+    order => order.status === "Completed" && Number.isFinite(order.total_amount) && order.total_amount >= 0
   );
 
   const revenue = completed.reduce(
@@ -270,7 +270,7 @@ function updateDashboard() {
     filtered.map(order => order.customer_id)
   ).size;
 
-  $("#revenue").textContent = filtered.length ? money(revenue) : "—";
+  $("#revenue").textContent = completed.length ? money(revenue) : "—";
   $("#orders").textContent = filtered.length.toLocaleString("en-US");
   $("#average").textContent = completed.length ? money(average) : "—";
   $("#customers").textContent = activeCustomers.toLocaleString("en-US");
@@ -281,8 +281,14 @@ function updateDashboard() {
     : "No orders match this period and category.";
   $("#analytics-charts").hidden = !completed.length;
 
-  updateSalesChart(completed, month);
-  updateProductsChart(completed);
+  if (completed.length) {
+    updateSalesChart(completed, month);
+    updateProductsChart(completed);
+  } else {
+    salesChart?.destroy();
+    productsChart?.destroy();
+    salesChart = productsChart = null;
+  }
 
   $("#dashboard-status").textContent =
     `${filtered.length} filtered orders · ${products.length} products · ${activeCustomers} customers in filtered orders`;
@@ -366,7 +372,10 @@ function updateProductsChart(completed) {
 
 $("#year-filter").addEventListener("change", updateDashboard);
 $("#month-filter").addEventListener("change", updateDashboard);
-$("#category-filter").addEventListener("change", updateDashboard);
+$("#category-filter").addEventListener("change", () => {
+  updateDashboard();
+  renderInventory();
+});
 
 $("#export-csv").addEventListener("click", () => {
   if (!access.export || dashboardContent.hidden || $("#export-csv").disabled) return;
@@ -534,16 +543,19 @@ function renderInventory() {
     .toLowerCase()
     .trim();
 
+  const category = access.orders ? $("#category-filter").value : "all";
   const filteredProducts = products.filter(product =>
-    product.product_name.toLowerCase().includes(search) ||
-    product.category.toLowerCase().includes(search)
+    (category === "all" || product.category === category) &&
+    [product.product_name, product.category].some(value =>
+      String(value ?? "").toLowerCase().includes(search)
+    )
   );
 
   const body = $("#inventory-body");
   body.replaceChildren();
   $("#inventory-empty").hidden = filteredProducts.length > 0;
   $("#inventory-empty").textContent = products.length
-    ? "No products match your search."
+    ? "No products match your search or category."
     : "No products are available.";
 
   let lowStockCount = 0;
@@ -568,10 +580,11 @@ function renderInventory() {
 
     const row = document.createElement("tr");
 
+    const price = product.price ?? product.unit_price;
     const values = [
       product.product_name,
       product.category,
-      money(Number(product.price ?? product.unit_price)),
+      Number.isFinite(price) && price >= 0 ? money(price) : "—",
       Number.isSafeInteger(stock) ? stock.toLocaleString("en-US") : "—"
     ];
 

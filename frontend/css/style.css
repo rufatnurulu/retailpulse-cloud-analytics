@@ -126,7 +126,7 @@ form { display: grid; gap: .9rem; }
 .metrics small { color: var(--muted); font-size: .77rem; }
 
 .chart-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: .85rem; }
-.chart-container { position: relative; height: 17.5rem; margin-top: 1.15rem; }
+.chart-container { position: relative; min-width: 0; overflow: hidden; height: 17.5rem; margin-top: 1.15rem; }
 .empty-message { padding: 1rem; color: var(--muted); background: #f7f8fd; border-radius: 9px; }
 .inventory-panel h2 { font-size: 1.3rem; }
 #inventory-alert { color: #805018; background: #fff2d8; border-radius: 20px; padding: .35rem .65rem; font-size: .875rem; }
@@ -145,7 +145,8 @@ form { display: grid; gap: .9rem; }
 #stock-help { font-size: .875rem; margin: 0; }
 
 @media (max-width: 1060px) {
-  .chart-grid { grid-template-columns: 1fr; }
+  .chart-grid { grid-template-columns: minmax(0, 1fr); }
+  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 800px) {
@@ -160,6 +161,5 @@ form { display: grid; gap: .9rem; }
   .login-intro h1 { font-size: 2.2rem; }
   .login-art { display: none; }
   .workspace-header, .panel-heading { align-items: flex-start; flex-direction: column; gap: .7rem; }
-  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chart-container { height: 14rem; }
 }
