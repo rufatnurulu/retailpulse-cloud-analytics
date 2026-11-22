@@ -2,12 +2,18 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function hasRole(roles) {
-      return request.auth != null && activeRole(roles);
+      return request.auth != null && activeRole(request.auth.uid, roles);
     }
 
-    function activeRole(roles) {
-      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid));
-      return profile.data.active == true && profile.data.role in roles;
+    function activeRole(uid, roles) {
+      let profilePath = /databases/$(database)/documents/users/$(uid);
+      return exists(profilePath) && validProfile(get(profilePath).data, roles);
+    }
+
+    function validProfile(profile, roles) {
+      return profile.keys().hasAll(['active', 'role'])
+        && profile.active is bool && profile.active == true
+        && profile.role is string && profile.role in roles;
     }
 
     function canReadDashboard() {

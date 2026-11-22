@@ -44,3 +44,24 @@ transaction supports both legacy price fields (`price` and `unit_price`),
 and adds `product_doc_id` to new orders and `last_order_id` to the updated
 product. Existing orders remain readable. The old frontend cannot create sales
 under these rules, so refresh open sessions after rollout.
+
+### Coordinated Firebase Hosting release
+
+Build the reviewed frontend with the target project's Firebase web configuration
+and run the Firestore emulator suite before approval. For a hosted rehearsal, use
+a separate staging Firebase project and build the frontend with that project's
+configuration. A Hosting preview URL uses the backend selected by the build.
+
+After approval, confirm the production project and its default Hosting site.
+In one release window, use the same reviewed checkout for the compiled frontend
+and rules. Keep order entry paused while the release propagates, then reload old
+tabs and check role access before resuming. For the confirmed default site:
+
+```sh
+npm ci
+npm run build
+firebase deploy --only hosting,firestore:rules --project APPROVED_PRODUCTION_PROJECT_ID
+```
+
+Run `npm test` with the Firebase CLI and Java 21+ on PATH. Tests use the local
+`demo-retailpulse` emulator project. Use Node.js 24.12 or newer.
