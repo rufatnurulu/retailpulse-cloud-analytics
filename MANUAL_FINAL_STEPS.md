@@ -11,6 +11,9 @@ existing rules while this approval is pending.
    products, orders, and customers. Active Analyst can read products and
    orders. Active Inventory can read products. Each user can still read their
    own profile. Order and stock write permissions stay the same.
-3. If this matrix is acceptable, approve publishing **only** the tested
-   Firestore Rules from the commit in the release report. No account changes
-   or new Hosting release are needed for that rules change.
+3. If this matrix is acceptable, reply with explicit approval to publish
+   **only** the tested `firestore.rules` to `retailpulse-cloud-analytics`.
+   Its SHA-256 is
+   `905c136d7a38a73e9ecf82b2a690f125e0465a43b67eaaf0964e30a47b63a84f`.
+   The verified baseline has been backed up outside Git. No account changes
+   or new Hosting release are needed.
