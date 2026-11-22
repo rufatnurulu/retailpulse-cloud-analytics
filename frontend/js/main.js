@@ -10,6 +10,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   runTransaction
@@ -32,6 +33,26 @@ let loadVersion = 0;
 let unsubscribeOrders = null;
 
 let unsubscribeProducts = null;
+let currentUserRole = null;
+
+async function loadUserRole(user) {
+  const snapshot = await getDoc(doc(db, "users", user.uid));
+  if (!snapshot.exists()) throw new Error("User profile not found.");
+  const profile = snapshot.data();
+  if (profile.active !== true ||
+      !["admin", "sales", "inventory", "analyst"].includes(profile.role)) {
+    throw new Error("Invalid or inactive user profile.");
+  }
+  return profile.role;
+}
+
+function applyRoleToUI() {
+  const canOrder = ["admin", "sales"].includes(currentUserRole);
+  $("#order-form").closest(".order-panel").hidden = !canOrder;
+  $("#export-csv").hidden = !["admin", "analyst"].includes(currentUserRole);
+  const badge = $("#user-role");
+  if (badge) badge.textContent = currentUserRole || "";
+}
 
 const money = value =>
   new Intl.NumberFormat("en-US", {
@@ -62,6 +83,7 @@ $("#logout").addEventListener("click", async () => {
 
 onAuthStateChanged(auth, async user => {
   const version = ++loadVersion;
+  currentUserRole = null;
 
   if (unsubscribeOrders) {
     unsubscribeOrders();
@@ -85,6 +107,10 @@ onAuthStateChanged(auth, async user => {
   $("#dashboard-status").textContent = "Loading data...";
 
   try {
+    currentUserRole = await loadUserRole(user);
+    if (version !== loadVersion || !auth.currentUser) return;
+    applyRoleToUI();
+
     const customerDocs = await getDocs(
   collection(db, "customers")
 );
@@ -137,7 +163,8 @@ unsubscribeOrders = onSnapshot(
   } catch (error) {
     if (version !== loadVersion) return;
     $("#dashboard-status").textContent =
-      "Failed to load Firestore data.";
+      error.message || "Failed to load Firestore data.";
+    $("#order-form").closest(".order-panel").hidden = true;
     console.error(error);
   }
 });
@@ -352,6 +379,11 @@ function populateOrderForm() {
 
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();
+
+  if (!["admin", "sales"].includes(currentUserRole)) {
+    $("#order-message").textContent = "Your role cannot create orders.";
+    return;
+  }
 
   const message = $("#order-message");
   const button = $("#order-form button");
