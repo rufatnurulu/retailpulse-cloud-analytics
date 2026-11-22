@@ -45,6 +45,52 @@ let subscriptions = [];
 let session = 0;
 let dataVersion = 0;
 let currentRole;
+let currentView;
+let reportingPeriod = "";
+
+const viewDetails = {
+  overview: ["Overview", "Sales, orders, and customers for the selected period."],
+  analytics: ["Sales analytics", "Compare monthly revenue and the top products by sales."],
+  order: ["Orders", "Record a sale and its inventory deduction."],
+  inventory: ["Inventory", "Review the product catalog and current stock."]
+};
+
+function showView(view, focusHeading = false) {
+  const navigation = $(`[data-nav="${view}"]`);
+  if (navigation.hidden) return;
+  currentView = view;
+  dashboardContent.dataset.view = view;
+  document.querySelectorAll("[data-nav]").forEach(link => {
+    if (link === navigation) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  const showAnalytics = view === "overview" || view === "analytics";
+  $("#analytics").hidden = !showAnalytics;
+  $("#order-entry").hidden = view !== "order";
+  $("#inventory-view").hidden = view !== "inventory";
+  const heading = $("#workspace-heading");
+  heading.textContent = viewDetails[view][0];
+  updateViewContext();
+  if (focusHeading) {
+    window.scrollTo(0, 0);
+    heading.focus({ preventScroll: true });
+  }
+  if (showAnalytics) {
+    salesChart?.resize();
+    productsChart?.resize();
+  }
+}
+
+function updateViewContext() {
+  const subtitle = viewDetails[currentView]?.[1] ?? "";
+  $("#overview-period").textContent = ["overview", "analytics"].includes(currentView) && reportingPeriod
+    ? `${reportingPeriod} · ${subtitle}`
+    : subtitle;
+}
+
+document.querySelectorAll("[data-nav]").forEach(link => {
+  link.addEventListener("click", () => showView(link.dataset.nav, true));
+});
 
 function resetData() {
   dataVersion++;
@@ -67,7 +113,10 @@ function resetData() {
   $("#inventory-search").value = "";
   $("#year-filter").replaceChildren();
   $("#month-filter").value = "all";
-  $("#overview-period").textContent = "Retail Performance Overview";
+  reportingPeriod = "";
+  currentView = undefined;
+  $("#workspace-heading").textContent = "Workspace";
+  updateViewContext();
   $("#category-filter").value = "all";
   $("#inventory-body").replaceChildren();
   for (const id of ["revenue", "orders", "average", "customers"]) {
@@ -152,15 +201,13 @@ onAuthStateChanged(auth, user => {
     access = permissions[role];
     $("#user-role").textContent = role;
     $("#user-role").hidden = false;
-    $("#analytics").hidden = !access.orders;
-    $("#order-form").closest(".order-panel").hidden = !access.createOrder;
     $("#stock-form").closest(".stock-panel").hidden = !access.adjustStock;
     $("#export-csv").hidden = !access.export;
+    $("[data-nav=overview]").hidden = !access.orders;
     $("[data-nav=analytics]").hidden = !access.orders;
     $("[data-nav=inventory]").hidden = false;
-    $("[data-nav=stock]").hidden = !access.adjustStock;
     $("[data-nav=order]").hidden = !access.createOrder;
-    $("#overview-period").textContent = access.orders ? "Retail Performance Overview" : "Inventory Management";
+    showView(access.orders ? "overview" : "inventory");
     status.textContent = "Loading workspace…";
 
     const version = dataVersion;
@@ -247,10 +294,9 @@ function updateDashboard() {
   $("#year-filter").disabled = !year;
   $("#month-filter").disabled = !year;
   const period = month === "all" ? year : `${months[Number(month) - 1]} ${year}`;
-  $("#overview-period").textContent = year
-    ? `Retail Performance Overview — ${period}`
-    : "Retail Performance Overview";
-  $("#sales-title").textContent = year ? `Sales Performance — ${period}` : "Sales Performance";
+  reportingPeriod = year ? period : "";
+  updateViewContext();
+  $("#sales-title").textContent = year ? `Sales performance · ${period}` : "Sales performance";
 
   const filtered = getFilteredOrders();
 
@@ -291,8 +337,30 @@ function updateDashboard() {
   }
 
   $("#dashboard-status").textContent =
-    `${filtered.length} filtered orders · ${products.length} products · ${activeCustomers} customers in filtered orders`;
+    `${filtered.length.toLocaleString("en-US")} filtered orders · ${products.length.toLocaleString("en-US")} products`;
 }
+
+const compactAmount = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const chartAxis = {
+  border: { display: false },
+  grid: { color: "#e9eef5", drawTicks: false },
+  ticks: { color: "#506079", padding: 8, callback: value => compactAmount.format(value) },
+  beginAtZero: true
+};
+const chartLabels = {
+  border: { display: false },
+  grid: { display: false },
+  ticks: { color: "#506079", padding: 8 }
+};
+const chartPlugins = {
+  legend: { display: false },
+  tooltip: {
+    backgroundColor: "#182943",
+    padding: 11,
+    displayColors: false,
+    callbacks: { label: item => money(item.raw) }
+  }
+};
 
 function updateSalesChart(completed, month) {
   const monthly = monthlyRevenue(completed, month);
@@ -306,18 +374,18 @@ function updateSalesChart(completed, month) {
       datasets: [{
         label: "Completed Sales (AZN)",
         data: monthly.map(({ total }) => total),
-        backgroundColor: "#765bd9",
-        borderRadius: 6
+        backgroundColor: "#3168de",
+        hoverBackgroundColor: "#164bd4",
+        maxBarThickness: 34,
+        borderRadius: 4
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: item => money(item.raw) } }
-      }
+      scales: { x: chartLabels, y: chartAxis },
+      plugins: chartPlugins
     }
   });
 }
@@ -353,8 +421,10 @@ function updateProductsChart(completed) {
       datasets: [{
         label: "Revenue (AZN)",
         data: topFive.map(([, revenue]) => revenue),
-        backgroundColor: "#257e70",
-        borderRadius: 6
+        backgroundColor: "#178c7c",
+        hoverBackgroundColor: "#06796b",
+        maxBarThickness: 22,
+        borderRadius: 4
       }]
     },
     options: {
@@ -362,10 +432,8 @@ function updateProductsChart(completed) {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: item => money(item.raw) } }
-      }
+      scales: { x: chartAxis, y: chartLabels },
+      plugins: chartPlugins
     }
   });
 }
@@ -419,6 +487,8 @@ function populateOrderForm() {
   const customerSelect = $("#order-customer");
   const productSelect = $("#order-product");
 
+  const customerQuery = $("#customer-search").value.trim().toLowerCase();
+  const productQuery = $("#product-search").value.trim().toLowerCase();
   const selectedCustomer = customerSelect.value;
   const selectedProduct = productSelect.value;
   customerSelect.innerHTML =
@@ -428,14 +498,16 @@ function populateOrderForm() {
     '<option value="">Select Product</option>';
 
   customers.forEach(customer => {
+    const name = customer.customer_name || customer.name || customer.customer_id;
+    if (!`${name} ${customer.customer_id}`.toLowerCase().includes(customerQuery)) return;
     const option = document.createElement("option");
     option.value = customer.id;
-    option.textContent =
-      customer.customer_name || customer.name || customer.customer_id;
+    option.textContent = name;
     customerSelect.appendChild(option);
   });
 
   products.forEach(product => {
+    if (!`${product.product_name} ${product.product_id}`.toLowerCase().includes(productQuery)) return;
     const option = document.createElement("option");
     option.value = product.id;
     const price = product.price ?? product.unit_price;
@@ -446,11 +518,27 @@ function populateOrderForm() {
     option.disabled = !hasPrice || !hasStock || product.stock === 0;
     productSelect.appendChild(option);
   });
-  if (customers.some(customer => customer.id === selectedCustomer)) customerSelect.value = selectedCustomer;
+  if (Array.from(customerSelect.options).some(option => option.value === selectedCustomer)) {
+    customerSelect.value = selectedCustomer;
+  }
   if (Array.from(productSelect.options).some(option => option.value === selectedProduct && !option.disabled)) {
     productSelect.value = selectedProduct;
   }
+  customerSelect.options[0].textContent = customerSelect.options.length > 1 ? "Select customer" : "No matching customers";
+  productSelect.options[0].textContent = productSelect.options.length > 1 ? "Select product" : "No matching products";
+  updateOrderProductDetail();
 }
+
+function updateOrderProductDetail() {
+  const product = products.find(item => item.id === $("#order-product").value);
+  $("#order-product-detail").textContent = product
+    ? `${money(product.price ?? product.unit_price)} per unit · ${product.stock.toLocaleString("en-US")} available`
+    : "Select a product to see its price and available stock.";
+}
+
+$("#customer-search").addEventListener("input", populateOrderForm);
+$("#product-search").addEventListener("input", populateOrderForm);
+$("#order-product").addEventListener("change", updateOrderProductDetail);
 
 $("#order-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -479,6 +567,7 @@ $("#order-form").addEventListener("submit", async event => {
     if (version !== dataVersion) return;
     message.textContent = `Order saved. ID: ${orderId}`;
     form.reset();
+    populateOrderForm();
   } catch (error) {
     if (version !== dataVersion) return;
     message.textContent = error.code === "permission-denied"
@@ -544,6 +633,9 @@ function renderInventory() {
     .trim();
 
   const category = access.orders ? $("#category-filter").value : "all";
+  const clearCategory = $("#clear-inventory-category");
+  clearCategory.hidden = category === "all";
+  clearCategory.textContent = `Clear category: ${category}`;
   const filteredProducts = products.filter(product =>
     (category === "all" || product.category === category) &&
     [product.product_name, product.category].some(value =>
@@ -608,3 +700,10 @@ $("#inventory-search").addEventListener(
   "input",
   renderInventory
 );
+
+
+$("#clear-inventory-category").addEventListener("click", () => {
+  $("#category-filter").value = "all";
+  $("#category-filter").dispatchEvent(new Event("change"));
+  $("#inventory-search").focus();
+});
