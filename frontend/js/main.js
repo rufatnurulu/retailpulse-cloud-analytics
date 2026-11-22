@@ -14,8 +14,11 @@ import {
   onSnapshot,
   runTransaction
 } from "firebase/firestore";
-import Chart from "chart.js/auto";
+import { BarController, BarElement, CategoryScale, Chart, Legend, LinearScale, Tooltip } from "chart.js";
+import { filterOrders, monthlyRevenue, months, orderYears } from "./analytics.js";
 import { adjustStock } from "./stock.js";
+
+Chart.register(BarController, BarElement, CategoryScale, Legend, LinearScale, Tooltip);
 
 const $ = selector => document.querySelector(selector);
 
@@ -57,6 +60,9 @@ function resetDashboard() {
   orders = [];
   products = [];
   customers = [];
+  $("#year-filter").replaceChildren();
+  $("#month-filter").value = "all";
+  $("#overview-period").textContent = "Retail Performance Overview";
   $("#dashboard-content").hidden = true;
   $("#order-form").reset();
   $("#order-message").textContent = "";
@@ -155,6 +161,7 @@ onAuthStateChanged(auth, user => {
         unsubscribeOrders = onSnapshot(collection(db, "orders"), snapshot => {
           if (!isCurrent()) return;
           orders = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+          populateYears();
           updateDashboard();
         }, onDataError);
       }).catch(onDataError);
@@ -173,6 +180,7 @@ function populateCategories() {
     ...new Set(products.map(product => product.category))
   ].sort();
 
+  const previous = $("#category-filter").value;
   $("#category-filter").innerHTML =
     '<option value="all">All Categories</option>';
 
@@ -182,30 +190,36 @@ function populateCategories() {
     option.textContent = category;
     $("#category-filter").appendChild(option);
   }
+  if (categories.includes(previous)) $("#category-filter").value = previous;
+}
+
+function populateYears() {
+  const select = $("#year-filter");
+  const previous = select.value;
+  const years = orderYears(orders);
+  select.replaceChildren(...years.map(year => new Option(year, year)));
+  if (years.includes(previous)) select.value = previous;
 }
 
 function getFilteredOrders() {
-  const month = $("#month-filter").value;
-  const category = $("#category-filter").value;
-
-  const productMap = new Map(
-    products.map(product => [product.product_id, product])
-  );
-
-  return orders.filter(order => {
-    const matchesMonth =
-      month === "all" || order.order_date.slice(5, 7) === month;
-
-    const product = productMap.get(order.product_id);
-
-    const matchesCategory =
-      category === "all" || product?.category === category;
-
-    return matchesMonth && matchesCategory;
+  return filterOrders(orders, products, {
+    year: $("#year-filter").value,
+    month: $("#month-filter").value,
+    category: $("#category-filter").value
   });
 }
 
 function updateDashboard() {
+  const year = $("#year-filter").value;
+  const month = $("#month-filter").value;
+  $("#year-filter").disabled = !year;
+  $("#month-filter").disabled = !year;
+  const period = month === "all" ? year : `${months[Number(month) - 1]} ${year}`;
+  $("#overview-period").textContent = year
+    ? `Retail Performance Overview — ${period}`
+    : "Retail Performance Overview";
+  $("#sales-title").textContent = year ? `Sales Performance — ${period}` : "Sales Performance";
+
   const filtered = getFilteredOrders();
 
   const completed = filtered.filter(
@@ -229,36 +243,25 @@ function updateDashboard() {
   $("#average").textContent = money(average);
   $("#customers").textContent = activeCustomers;
 
-  updateSalesChart(completed);
+  updateSalesChart(completed, month);
   updateProductsChart(completed);
 
   $("#dashboard-status").textContent =
     `${filtered.length} filtered orders · ${products.length} products · ${customers.length} registered customers`;
 }
 
-function updateSalesChart(completed) {
-  const monthly = Array(12).fill(0);
-
-  for (const order of completed) {
-    const month = Number(order.order_date.slice(5, 7)) - 1;
-
-    if (month >= 0 && month < 12) {
-      monthly[month] += Number(order.total_amount);
-    }
-  }
+function updateSalesChart(completed, month) {
+  const monthly = monthlyRevenue(completed, month);
 
   if (salesChart) salesChart.destroy();
 
   salesChart = new Chart($("#sales-chart"), {
     type: "bar",
     data: {
-      labels: [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-      ],
+      labels: monthly.map(({ label }) => label.slice(0, 3)),
       datasets: [{
         label: "Completed Sales (AZN)",
-        data: monthly,
+        data: monthly.map(({ total }) => total),
         backgroundColor: "#2563eb",
         borderRadius: 6
       }]
@@ -313,6 +316,7 @@ function updateProductsChart(completed) {
   });
 }
 
+$("#year-filter").addEventListener("change", updateDashboard);
 $("#month-filter").addEventListener("change", updateDashboard);
 $("#category-filter").addEventListener("change", updateDashboard);
 

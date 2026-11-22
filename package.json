@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "firebase emulators:exec --only firestore --project demo-retailpulse \"node --test tests/firestore-rules.test.js\""
+    "test": "node --test tests/analytics.test.js && npm run test:firestore",
+    "test:firestore": "firebase emulators:exec --only firestore --project demo-retailpulse \"node --test tests/firestore-rules.test.js\""
   },
   "repository": {
     "type": "git",
