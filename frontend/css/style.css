@@ -126,3 +126,150 @@ button:hover {
     flex-direction: column;
   }
 }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.filters select {
+  min-width: 190px;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: white;
+  color: #172033;
+  font-size: 14px;
+}
+
+.filters button {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .filters,
+  .filters label,
+  .filters select,
+  .filters button {
+    width: 100%;
+  }
+}
+
+.order-panel {
+  background: white;
+  padding: 24px;
+  border-radius: 14px;
+  margin-bottom: 24px;
+  border: 1px solid #e2e8f0;
+}
+
+.order-panel h2 {
+  margin-bottom: 18px;
+}
+
+#order-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+#order-form select,
+#order-form input {
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  min-width: 150px;
+}
+
+#order-form button {
+  padding: 12px 20px;
+}
+
+#order-message {
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+@media (max-width: 600px) {
+  #order-form > * {
+    width: 100%;
+  }
+}
+
+.inventory-panel {
+  background: white;
+  padding: 24px;
+  border-radius: 14px;
+  margin-bottom: 24px;
+  border: 1px solid #e2e8f0;
+}
+
+.inventory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.inventory-header p {
+  color: #64748b;
+  margin-top: 6px;
+}
+
+#inventory-alert {
+  color: #b45309;
+  font-weight: 600;
+}
+
+#inventory-search {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.inventory-table-wrapper {
+  overflow-x: auto;
+}
+
+.inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.inventory-table th,
+.inventory-table td {
+  padding: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.inventory-table th {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.inventory-table tbody tr:hover {
+  background: #f1f5f9;
+}
+
+@media (max-width: 600px) {
+  .inventory-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

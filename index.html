@@ -36,6 +36,98 @@
         <button id="logout">Sign Out</button>
       </header>
 
+<section class="inventory-panel">
+  <div class="inventory-header">
+    <div>
+      <h2>Inventory Management</h2>
+      <p>Monitor product stock levels</p>
+    </div>
+
+    <span id="inventory-alert">Checking stock...</span>
+  </div>
+
+  <input
+    type="search"
+    id="inventory-search"
+    placeholder="Search products..."
+  />
+
+  <div class="inventory-table-wrapper">
+    <table class="inventory-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Category</th>
+          <th>Price</th>
+          <th>Stock</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="inventory-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<div class="filters">
+
+<section class="order-panel">
+  <h2>Create New Order</h2>
+
+  <form id="order-form">
+    <select id="order-customer" required>
+      <option value="">Select Customer</option>
+    </select>
+
+    <select id="order-product" required>
+      <option value="">Select Product</option>
+    </select>
+
+    <input
+      id="order-quantity"
+      type="number"
+      min="1"
+      step="1"
+      value="1"
+      required
+    />
+
+    <button type="submit">Add Order</button>
+  </form>
+
+  <p id="order-message" role="status"></p>
+</section>
+
+  <label>
+    Month
+    <select id="month-filter">
+      <option value="all">All Months</option>
+      <option value="01">January</option>
+      <option value="02">February</option>
+      <option value="03">March</option>
+      <option value="04">April</option>
+      <option value="05">May</option>
+      <option value="06">June</option>
+      <option value="07">July</option>
+      <option value="08">August</option>
+      <option value="09">September</option>
+      <option value="10">October</option>
+      <option value="11">November</option>
+      <option value="12">December</option>
+    </select>
+  </label>
+
+  <label>
+    Product Category
+    <select id="category-filter">
+      <option value="all">All Categories</option>
+    </select>
+  </label>
+
+  <button id="export-csv" type="button">
+    Export CSV
+  </button>
+</div>
+
       <div class="metrics">
         <article>
           <span>Total Revenue</span>
@@ -61,6 +153,13 @@
           <canvas id="sales-chart"></canvas>
         </div>
       </article>
+      
+<article class="chart-card">
+  <h2>Top 5 Products by Revenue</h2>
+  <div class="chart-container">
+    <canvas id="products-chart"></canvas>
+  </div>
+</article>
 
       <p id="dashboard-status">Loading data...</p>
     </section>
