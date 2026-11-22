@@ -43,30 +43,15 @@ after(async () => {
   await environment?.cleanup();
 });
 
-const readsByRole = {
-  admin: ["products", "customers", "orders"],
-  sales: ["products", "customers", "orders"],
-  inventory: ["products"],
-  analyst: ["products", "orders"],
-  inactive: [],
-  invalid: [],
-  missing: [],
-  "missing-role": [],
-  "missing-active": [],
-  "invalid-active": [],
-  "invalid-role-type": [],
-  anonymous: []
-};
-
-for (const [role, readable] of Object.entries(readsByRole)) {
-  test(`${role} can read only the permitted collections`, async () => {
-    const db = role === "anonymous" ? environment.unauthenticatedContext().firestore() : dbFor(role);
-    for (const name of ["products", "customers", "orders"]) {
-      const expect = readable.includes(name) ? assertSucceeds : assertFails;
-      await expect(getDocs(collection(db, name)));
+test("existing collection reads require authentication", async () => {
+  const anonymous = environment.unauthenticatedContext().firestore();
+  for (const name of ["products", "customers", "orders"]) {
+    await assertFails(getDocs(collection(anonymous, name)));
+    for (const role of [...roles, "inactive", "missing"]) {
+      await assertSucceeds(getDocs(collection(dbFor(role), name)));
     }
-  });
-}
+  }
+});
 
 test("profiles are private and app clients cannot change roles", async () => {
   const sales = dbFor("sales");
@@ -109,6 +94,7 @@ test("sales can only deduct stock in a valid, atomic order", async () => {
   await assertFails(updateDoc(product, { stock: 10 }));
   await assertFails(updateDoc(product, { stock: 10, last_order_id: "missing-order" }));
   await assertFails(setDoc(doc(db, "orders", "order-only"), orderData("order-only")));
+  await assertFails(setDoc(doc(dbFor("admin"), "orders", "admin-order-only"), orderData("admin-order-only")));
   await assertFails(placeOrder(db, "invalid-price", 10, { unit_price: 1, total_amount: 2 }));
   await assertFails(placeOrder(db, "invalid-total", 10, { total_amount: 3.97 }));
   await assertFails(placeOrder(db, "invalid-customer", 10, { customer_id: "C0002" }));
@@ -123,7 +109,11 @@ test("sales can only deduct stock in a valid, atomic order", async () => {
   await assertFails(placeOrder(dbFor("analyst"), "analyst-order", 10));
   await assertFails(placeOrder(dbFor("missing-role"), "missing-role-order", 10));
   await assertFails(placeOrder(dbFor("missing-active"), "missing-active-order", 10));
+  await assertFails(placeOrder(dbFor("invalid-role-type"), "invalid-role-type-order", 10));
+  await assertFails(placeOrder(dbFor("invalid-active"), "invalid-active-order", 10));
   assert.equal((await getDoc(product)).data().stock, 12);
+  assert.equal((await getDoc(doc(db, "orders", "invalid-price"))).exists(), false);
+  assert.equal((await getDoc(doc(db, "orders", "historical"))).data().order_date, "2025-01-01");
   await assertSucceeds(placeOrder(db, "sales-order", 10));
   await assertFails(updateDoc(product, { stock: 8, last_order_id: "sales-order" }));
   assert.equal((await getDoc(product)).data().stock, 10);
@@ -187,13 +177,13 @@ test("business data edits and deletions are denied", async () => {
   await assertFails(deleteDoc(doc(admin, "customers", "customer-doc")));
 });
 
-test("deactivating a profile immediately removes Firestore access for an existing session", async () => {
+test("deactivating a profile revokes order writes for an existing session", async () => {
   const db = dbFor("sales");
   await assertSucceeds(getDocs(collection(db, "customers")));
   await environment.withSecurityRulesDisabled(async context => {
     await updateDoc(doc(context.firestore(), "users", "sales"), { active: false });
   });
-  await assertFails(getDocs(collection(db, "customers")));
+  await assertSucceeds(getDocs(collection(db, "customers")));
   await assertFails(placeOrder(db, "revoked-order", 6));
   await assertFails(createOrder(db, "customer-doc", "legacy-price", 1));
 });

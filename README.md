@@ -20,7 +20,7 @@ Revenue and average order value use completed orders. Order count and distinct c
 | Inventory | Read | — | — | — | Yes | — |
 | Analyst | Read | Read | — | — | — | Yes |
 
-The table describes the app and the reviewed repository rules. CSV button visibility is a UI feature. Users with Firestore order-read access can retrieve order data directly.
+The table describes the role-based workspace and write permissions. Existing Firestore read rules allow signed-in users to read products, customers, and orders directly. The order fix preserves that read policy.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Firebase profile documents need an approved lowercase `role` and Boolean `active
 
 ## Status
 
-The hosted dashboard and independent stock adjustments use the existing production rules. Order creation with the new payload passes local emulator tests. It requires separate approval to publish the updated rules. The updated rules also align direct Firestore reads with the role table above. The existing production rules allow broader authenticated reads.
+The hosted dashboard and independent stock adjustments use the existing production rules. Order creation with the new payload passes local emulator tests. It requires separate approval to publish the updated rules. The patch preserves the existing authenticated read policy and independent stock adjustments.
 
 ## CV summary
 

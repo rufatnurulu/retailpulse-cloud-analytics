@@ -1,19 +1,26 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function hasRole(roles) {
-      return request.auth != null && activeRole(request.auth.uid, roles);
+
+    function signedIn() {
+  return request.auth != null;
+}
+
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    function activeRole(uid, roles) {
-      let profilePath = /databases/$(database)/documents/users/$(uid);
-      return exists(profilePath) && validProfile(get(profilePath).data, roles);
+    function canCreateOrder() {
+      return signedIn()
+        && userProfile().active == true
+        && userProfile().role in ['admin', 'sales'];
     }
 
-    function validProfile(profile, roles) {
-      return profile.keys().hasAll(['active', 'role'])
-        && profile.active is bool && profile.active == true
-        && profile.role is string && profile.role in roles;
+    function canAdjustStock() {
+      return signedIn()
+        && userProfile().active == true
+        && userProfile().role in ['admin', 'inventory'];
     }
 
     function validId(id) {
@@ -32,7 +39,7 @@ service cloud.firestore {
         && validId(next.last_order_id)
         && !exists(orderPath)
         && order.product_doc_id == productDocId
-        && validStock(resource.data.stock)
+        && validStock(resource.data.stock) && validStock(next.stock)
         && resource.data.stock - next.stock == order.quantity;
     }
 
@@ -76,26 +83,35 @@ service cloud.firestore {
         && product.stock - next.stock == order.quantity;
     }
 
-    match /users/{uid} {
-      allow get: if request.auth != null && request.auth.uid == uid;
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update, delete: if false;
     }
 
-    match /products/{productDocId} {
-      allow read: if hasRole(['admin', 'sales', 'inventory', 'analyst']);
-      allow update: if validStock(request.resource.data.stock) && (
-        (hasRole(['admin', 'inventory'])
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']))
-        || (hasRole(['admin', 'sales']) && orderStockChange(productDocId))
-      );
+    match /customers/{documentId} {
+      allow read: if signedIn();
+      allow write: if false;
     }
 
-    match /customers/{customerDocId} {
-      allow read: if hasRole(['admin', 'sales']);
+    match /products/{documentId} {
+      allow read: if signedIn();
+
+      allow update: if canAdjustStock()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys().hasOnly(['stock'])
+        && request.resource.data.stock is int
+        && request.resource.data.stock >= 0
+        && request.resource.data.stock <= 9007199254740991;
+
+      allow update: if canCreateOrder() && orderStockChange(documentId);
+      allow create, delete: if false;
     }
 
-    match /orders/{orderId} {
-      allow read: if hasRole(['admin', 'sales', 'analyst']);
-      allow create: if hasRole(['admin', 'sales']) && validOrder(orderId);
+    match /orders/{documentId} {
+      allow read: if signedIn();
+
+      allow create: if canCreateOrder() && validOrder(documentId);
+      allow update, delete: if false;
     }
   }
 }
