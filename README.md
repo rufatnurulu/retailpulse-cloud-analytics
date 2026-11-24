@@ -1,5 +1,7 @@
 # RetailPulse Cloud Analytics
 
+<img src="public/favicon.svg" width="64" height="64" alt="RetailPulse brand mark">
+
 RetailPulse is a university portfolio project for retail sales analysis and inventory operations. It presents Firestore demo data in a dark-first, responsive business intelligence workspace with role-based access.
 
 **Live demo** [RetailPulse on Firebase Hosting](https://retailpulse-cloud-analytics.web.app). An existing RetailPulse account with an active role is required.
